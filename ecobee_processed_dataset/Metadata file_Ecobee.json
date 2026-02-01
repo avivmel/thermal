@@ -1,0 +1,1374 @@
+{
+  "BuildingInfo": {
+    "NumberOfBuilding": 1000,
+    "GeoInfo": {
+      "BuildingID": "Group#1",
+      "City": "",
+      "State": "CA",
+      "Country": "United State",
+      "ZIPCode": "",
+      "ClimateZone": "3C",
+      "UBID": "",
+      "BuildingID": "Group#2",
+      "City": "",
+      "State": "TX",
+      "Country": "United State",
+      "ZIPCode": "",
+      "ClimateZone": "2A",
+      "UBID": "",
+      "BuildingID": "Group#3",
+      "City": "",
+      "State": "NY",
+      "Country": "United State",
+      "ZIPCode": "",
+      "ClimateZone": "4A",
+      "UBID": "",
+      "BuildingID": "Group#4",
+      "City": "",
+      "State": "IL",
+      "Country": "United State",
+      "ZIPCode": "",
+      "ClimateZone": "5A",
+      "UBID": ""
+    },
+    "BuildingCharacteristics": {
+      "Name": "",
+      "Type": "Single Family",
+      "YearBuilt": "1900-2016",
+      "NumberOfFloors": "1-5",
+      "FloorArea": {
+        "TotalFloorArea": "< 600",
+        "ConditionedFloorArea": ""
+      },
+      "NumberOfPeople": "< 10",
+      "MoreInfo": "https://www.ecobee.com/donate-your-data/"
+    },
+    "SystemCharacteristics": {
+      "HVACSystemType": "Other",
+      "LightingSystemType": "LED",
+      "PluginEquipment": "Not available",
+      "WaterHeatingType": "Other",
+      "PerformanceRating": "",
+      "Others": "HVAC system type varies (split direct expansion cooling + furnace, heat pump)"
+    },
+    "Others": ""
+  },
+  "DataGovernance": {
+    "Version": "",
+    "Creation": {
+      "DataCreator": "Ecobee DYD",
+      "CreatedDate": "2017-12-31",
+      "DataCurator": "Na Luo",
+      "CuratedDate": "2022-03-31",
+      "CuratedStrategy": "1,000 single family homes; Data for a single year of 2017; Equally covering four US states - TX, CA, NY, and IL; Filling data gap using linear interpolation",
+      "ChangeLog": ""
+    },
+    "DataSourceType": "Measurement",
+    "RawDataAvailable": {
+      "RawDataAvailable": true,
+      "AccessLink": "https://bbd.labworks.org/ds/bbd/ecobee"
+    },
+    "Sharing": {
+      "ContactPoint": {
+        "Name": "Na Luo",
+        "Email": "nluo@lbl.gov",
+        "Phone": "",
+        "Org": "Lawrence Berkeley National Laboratory"
+      },
+      "License": "10.25584/ecobee/1854924",
+      "Acknowledgement": "This effort was supported by the Assistant Secretary for Energy Efficiency and Renewable Energy, Office of Building Technologies of the United States Department of Energy, under Contract No. DE-AC02-05CH11231. The authors appreciate the cooperation of Ecobee Inc. and its anonymous customers who participated in the Donate Your Data program."
+    },
+    "KnownIssue": "",
+    "Note": ""
+  },
+  "DataCategory": {
+    "EnergyUseData": {
+      "DataInfo": {
+        "DataToolApplied": "",
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": 0,
+          "OutlierRate": 0
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "WholeBuilding": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Heating": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Cooling": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Ventilation": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "PluginEquipment": {
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Lighting": {
+        "InteriorLighting": false,
+        "ExternalLighting": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "ServiceWaterHeating": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Transport": {
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "ProcessLoad": {
+        "Fuel": false,
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "IndoorEnvironmentalData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": ".csv, .nc",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "2017-01-01",
+          "EndDate": "2017-12-31"
+        },
+        "DataResolution": {
+          "SpatialResolution": "by room",
+          "TemporalResolution": "5 minutes"
+        },
+        "DataQuality": {
+          "MissingRate": "2%",
+          "OutlierRate": "1%"
+        },
+        "RawDataAvailable": true,
+        "AccessLink": "https://bbd.labworks.org/ds/bbd/ecobee",
+        "Notes": ""
+      },
+      "Thermal": {
+        "Temperature": true,
+        "Humidity": true,
+        "AirVelocity": false,
+        "Pressure": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "IndoorAirQuality": {
+        "CO2Concentration": false,
+        "ToxicGas": false,
+        "PM": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Visual": {
+        "NaturalIlluminance": false,
+        "ArtificialIlluminance": false,
+        "Glare": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Acoustical": {
+        "Sound": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "OutdoorEnvironmentalData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": ".csv, .nc",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "2017-01-01",
+          "EndDate": "2017-12-31"
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": "5 minutes"
+        },
+        "DataQuality": {
+          "MissingRate": "3%",
+          "OutlierRate": "0.5%"
+        },
+        "RawDataAvailable": true,
+        "AccessLink": "https://bbd.labworks.org/ds/bbd/ecobee",
+        "Notes": ""
+      },
+      "Thermal": {
+        "Temperature": true,
+        "Humidity": true,
+        "Pressure": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "AirQuality": {
+        "CO2Concentration": false,
+        "ToxicGas": false,
+        "PM": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Solar": {
+        "Global Horizontal Radiation": false,
+        "Direct Normal Radiation": false,
+        "Diffuse Horizontal Radiation": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Wind": {
+        "WindSpeed": false,
+        "WindDirection": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Visual": {
+        "NaturalIlluminance": false,
+        "ArtificialIlluminance": false,
+        "CloudCover": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Acoustical": {
+        "Sound": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "SystemOperationalData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": ".csv, .nc",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "2017-01-01",
+          "EndDate": "2017-12-31"
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": "5 minutes"
+        },
+        "DataQuality": {
+          "MissingRate": "2%",
+          "OutlierRate": "1%"
+        },
+        "RawDataAvailable": true,
+        "AccessLink": "https://bbd.labworks.org/ds/bbd/ecobee",
+        "Notes": ""
+      },
+      "HVAC": {
+        "Chiller": false,
+        "Fan": true,
+        "Pump": false,
+        "CoolingTower": false,
+        "Boiler": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Elevator": {
+        "OperationalStatus": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "WindowDoor": {
+        "WindowStatus": false,
+        "DoorStatus": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "ControlLogicData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": ".csv, .nc",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "2017-01-01",
+          "EndDate": "2017-12-31"
+        },
+        "DataResolution": {
+          "SpatialResolution": "Whole building",
+          "TemporalResolution": "5 minutes"
+        },
+        "DataQuality": {
+          "MissingRate": "2%",
+          "OutlierRate": "1%"
+        },
+        "RawDataAvailable": true,
+        "AccessLink": "https://bbd.labworks.org/ds/bbd/ecobee",
+        "Notes": ""
+      },
+      "HVAC": {
+        "ThermostatSetpoint": true,
+        "SupplyAirTemperature": false,
+        "ChilledWaterTemperature": false,
+        "Pressure": false,
+        "AirFlowRate": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Lighting": {
+        "DimmingLogic": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Shading": {
+        "ShadingLogic": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "OccupantData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": "",
+          "OutlierRate": ""
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "Occupancy": {
+        "Presence": false,
+        "Count": false,
+        "Proxy": {
+          "Wifi": false,
+          "CO2Concentration": false
+        },
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Action": {
+        "ThermostatAdjustment": false,
+        "WindowStatus": false,
+        "ShadingStatus": false,
+        "DoorStatus": false,
+        "LightingStatus": false,
+        "PluginEquipmentStatus": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Attitude": {
+        "IEQPreference": false,
+        "ComfortLevel": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "DesignBasisData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": "",
+          "OutlierRate": ""
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "IEQCriteria": {
+        "Thermal": false,
+        "Visual": false,
+        "IndoorAirQuality": false,
+        "Acoustic": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "DesignWeatherData": {
+        "DesignDayWeatherFile": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Drawings": {
+        "3D-Model": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "BuildingandSystemAssetData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": "",
+          "OutlierRate": ""
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "BuildingCharacteristics": {
+        "BuildingType": false,
+        "Vintage": false,
+        "NumberofFloors": false,
+        "FloorArea": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "SystemCharacteristics": {
+        "HVACSystem": false,
+        "LightingSystem": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "UtilityRateAndGridSignalData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": "",
+          "OutlierRate": ""
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "Tariff": {
+        "Real-timePricing": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "DemandResponse": {
+        "DemandResponseSignal": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "OnsiteGenerationData": {
+      "DataInfo": {
+        "DataToolApplied": {
+          "Name": "",
+          "StandardApplied": ""
+        },
+        "DataFormat": "",
+        "DataLocation": "",
+        "DataPeriod": {
+          "StartDate": "",
+          "EndDate": ""
+        },
+        "DataResolution": {
+          "SpatialResolution": "",
+          "TemporalResolution": ""
+        },
+        "DataQuality": {
+          "MissingRate": "",
+          "OutlierRate": ""
+        },
+        "RawDataAvailable": false,
+        "AccessLink": "",
+        "Notes": ""
+      },
+      "WholeFacility": {
+        "Electricity": false,
+        "SpecifiedDataInfo": false,
+        "DataInfo": {
+          "DataToolApplied": {
+            "Name": "",
+            "StandardApplied": ""
+          },
+          "DataFormat": "",
+          "DataLocation": "",
+          "DataPeriod": {
+            "StartDate": "",
+            "EndDate": ""
+          },
+          "DataResolution": {
+            "SpatialResolution": "",
+            "TemporalResolution": ""
+          },
+          "DataQuality": {
+            "MissingRate": "",
+            "OutlierRate": ""
+          },
+          "RawDataAvailable": false,
+          "AccessLink": "",
+          "Notes": ""
+        }
+      },
+      "Others": {}
+    },
+    "Others": {}
+  },
+  "Applications": {
+    "DataFormats": ".csv, .nc, .json",
+    "UseCases#1": "Human Building Interaction (HBI)",
+    "UseCases#2": "Indoor Environmental Quality (IEQ)",
+    "ReferenceLink": "https://doi.org/10.1088/1748-9326/ac092f",
+    "APIAccess": ""
+  }
+}

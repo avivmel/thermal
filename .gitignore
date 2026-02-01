@@ -1,0 +1,32 @@
+# Data files
+ecobee_processed_dataset/clean_data/*.nc
+*.nc
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model checkpoints (can get large)
+*.pt
+*.pth
+checkpoints/
