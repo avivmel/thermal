@@ -1,6 +1,8 @@
 # Data files
 ecobee_processed_dataset/clean_data/*.nc
 *.nc
+*.csv
+
 
 # macOS
 .DS_Store
