@@ -336,3 +336,94 @@ For MPC, we need to answer: **"If I change the setpoint, what happens?"**
 | Active cooling starts | ~180K | Based on episode count × 36% |
 
 Plenty of data for incident-based modeling, especially for heating.
+
+---
+
+## Setpoint Response Episode Analysis
+
+Analysis of the extracted `setpoint_responses.parquet` dataset containing episodes where setpoint changed by >1°F and indoor temp reached the new target.
+
+### Data Quality
+
+Episodes are filtered to ensure clean training data:
+- **Target reached**: Only episodes where indoor temp reached the setpoint
+- **No mid-episode setpoint changes**: Episodes end if setpoint changes by >0.5°F
+- **No missing data**: Episodes end if sensor data gaps occur
+
+### Overview
+
+| Metric | Value |
+|--------|-------|
+| Total episodes | 158,604 |
+| Total rows | 1.9M |
+| Heat increase | 101,985 (64%) |
+| Cool decrease | 56,619 (36%) |
+| Median duration | 30 min |
+| Mean duration | 60 min |
+| P90 duration | 115 min |
+
+### Duration Distribution
+
+| Duration | Episodes | % | Cumulative |
+|----------|----------|---|------------|
+| <10 min | 12,440 | 7.8% | 7.8% |
+| 10-15 min | 22,300 | 14.1% | 21.9% |
+| 15-20 min | 22,655 | 14.3% | 36.2% |
+| 20-30 min | 28,014 | 17.7% | **53.9%** |
+| 30-45 min | 22,368 | 14.1% | 68.0% |
+| 45-60 min | 13,897 | 8.8% | 76.8% |
+| 1-1.5 hr | 14,864 | 9.4% | 86.2% |
+| 1.5-2 hr | 7,448 | 4.7% | 90.9% |
+| 2-4 hr | 9,105 | 5.7% | 96.6% |
+| >4 hr | 5,513 | 3.5% | 100% |
+
+**54% of episodes complete in ≤30 minutes. 91% complete in ≤2 hours.**
+
+### Duration by Change Type
+
+| Type | Episodes | Median | Mean | P90 |
+|------|----------|--------|------|-----|
+| heat_increase | 101,985 | 30 min | 56 min | 105 min |
+| cool_decrease | 56,619 | 30 min | 68 min | 140 min |
+
+Cooling episodes take slightly longer on average - AC systems are often less powerful than furnaces.
+
+### Duration by Initial Gap
+
+| Gap | Episodes | Median | Mean |
+|-----|----------|--------|------|
+| 0-1°F | 72,490 | 20 min | 39 min |
+| 1-2°F | 43,531 | 30 min | 56 min |
+| 2-3°F | 23,400 | 40 min | 79 min |
+| 3-5°F | 15,017 | 60 min | 110 min |
+| 5-10°F | 4,058 | 95 min | 183 min |
+| >10°F | 108 | 195 min | 294 min |
+
+**~20 minutes per °F of gap to close.**
+
+### Duration by State
+
+| State | Episodes | Median | Mean |
+|-------|----------|--------|------|
+| CA | 52,067 | 25 min | 62 min |
+| TX | 38,956 | 25 min | 50 min |
+| IL | 44,796 | 35 min | 65 min |
+| NY | 22,785 | 35 min | 64 min |
+
+Warmer states (CA, TX) have faster response times. Colder states (IL, NY) take longer, likely due to heating being more demanding.
+
+### Split Distribution
+
+| Split | Episodes | % |
+|-------|----------|---|
+| Train | 112,767 | 71% |
+| Val | 15,329 | 10% |
+| Test | 30,508 | 19% |
+
+### Key Takeaways
+
+- **54% complete in ≤30 min**
+- **77% complete in ≤1 hour**
+- **91% complete in ≤2 hours**
+- ~20 min per °F of initial gap
+- Cooling slightly slower than heating (68 vs 56 min mean)

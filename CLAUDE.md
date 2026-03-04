@@ -25,16 +25,90 @@ Develop a smart thermostat system that reduces peak electricity demand while mai
 - Objective: Minimize electricity cost under time-of-use pricing (peak: 5-8pm)
 - Constraints: Keep indoor temp within user-specified comfort bounds
 
+## Current Status: Time-to-Target Prediction
+
+**Best model achieves 18.7 min MAE** (median 9.5 min) - highly usable for MPC planning.
+
+### Linear Models
+
+| Model | MAE | Median | P90 | Improvement |
+|-------|-----|--------|-----|-------------|
+| Per-Home + Mode (linear) | 22.4 min | 13.1 min | 51.9 min | baseline |
+| Log-Duration Per-Home | 20.5 min | 11.0 min | 48.9 min | -8.6% |
+| Hierarchical + Enhanced | 20.2 min | 10.8 min | 48.9 min | -9.7% |
+
+### Gradient Boosting Models
+
+| Model | MAE | Median | P90 | Improvement |
+|-------|-----|--------|-----|-------------|
+| Global GBM (no home info) | 20.8 min | 11.0 min | 50.9 min | -7.1% |
+| Global GBM + Home Encoding | 18.8 min | 9.6 min | 46.4 min | -16.1% |
+| Per-Home GBM | 19.0 min | 9.2 min | 48.7 min | -15.2% |
+| **Hybrid GBM** | **18.7 min** | **9.5 min** | **46.6 min** | **-16.5%** |
+
+*Note: Filtered to episodes ≤4 hours. Anomalous long episodes (>4h) were 9% of data but caused 55% of errors.*
+
+### Key Discoveries
+
+1. **Filter anomalies** - Episodes >4 hours are equipment failures/vacation mode; filtering reduced MAE by 40%
+2. **Log-transform is essential** - homes vary 20x in thermal response (k: 6-120 min/°F)
+3. **`system_running` is highly predictive** - if HVAC already active, episodes complete 50% faster
+4. **Heating 28% faster than cooling** - consistent across models (coef: -0.33)
+5. **Home target encoding works** - encoding home_id as mean log-duration (with shrinkage) is very effective
+6. **Hybrid approach is best** - global GBM + per-home residual correction beats per-home models
+7. **Cold-start still hard** - system not running: ~30 min MAE vs ~16 min when running
+
+### Learned Coefficients (Hierarchical Linear Model)
+
+| Feature | Coefficient | Meaning |
+|---------|-------------|---------|
+| `log_gap` | +0.72 | Duration scales ~linearly with gap |
+| `is_heating` | -0.33 | Heating 28% faster |
+| `system_running` | -0.69 | Already-on = 50% faster |
+| `signed_thermal_drive` | -0.009 | Small outdoor temp effect |
+| `month_cos` | -0.05 | Slight seasonal effect |
+
+---
+
 ## Key Findings
 
-### Baseline Results (30-min horizon)
-- **Persistence baseline: 0.434°F MAE** - very strong, linear models can't beat it
-- Must evaluate by HVAC mode separately:
-  - Passive (73%): 0.413 MAE - temp barely changes
-  - Heating (20%): 0.481 MAE - temp rises ~0.36°F avg
-  - Cooling (7%): 0.522 MAE - temp falls ~0.29°F avg
-- Linear models correct bias but don't improve MAE (bias-variance tradeoff)
-- See `docs/BASELINE_RESULTS.md` for full analysis
+### Critical: Temperature Data is Quantized to Integers
+
+**The Ecobee sensors report whole degrees Fahrenheit only.** This fundamentally limits prediction granularity.
+
+| Observation | Value |
+|-------------|-------|
+| Homes with integer-only temps | 98% |
+| 15-min windows with exactly 0°F change | 66% |
+| Unique delta values (should be continuous) | 73 |
+
+**Temperature trajectories are stair-steps:**
+```
+Episode: 69→69→69→69→69→70  (sits at 69°F for 25min, jumps to 70°F)
+Episode: 77→77→77→77→76→76→76→76→75→75→75→75→74
+```
+
+**Why persistence baseline wins for temperature prediction:** With integer quantization, most 15-min windows don't cross a degree boundary. Predicting "no change" is literally correct 66% of the time.
+
+**Solution:** Reframe as time-to-target prediction (continuous minutes, not quantized degrees).
+
+### Temperature Prediction Baselines (for reference)
+
+**30-min horizon, arbitrary timesteps:**
+- Persistence: 0.434°F MAE - very strong due to quantization
+- Linear models can't beat it (bias-variance tradeoff)
+- See `docs/BASELINE_RESULTS.md`
+
+**15-min horizon, setpoint response episodes:**
+- Persistence: 0.433°F MAE - still wins on MAE
+- Per-home thermal: 0.475 MAE but best RMSE (-17%)
+- See `docs/SETPOINT_BASELINES.md`
+
+### Time-to-Target Prediction (recommended approach)
+
+Predict minutes until temperature reaches setpoint. Avoids quantization issues entirely.
+
+See `docs/TIME_TO_TARGET.md` for full results.
 
 ### Data Split Strategy
 - **Home split (NOT temporal)**: 70% train / 10% val / 20% test
@@ -54,13 +128,26 @@ Curated subset from LBNL containing smart thermostat data from ~1,000 single-fam
 | Raw Size | ~31.66 GB (NetCDF files) |
 | Raw Location | `ecobee_processed_dataset/extracted/clean_data/` |
 
-### Prepared Dataset
+### Prepared Datasets
+
+**Flat Dataset** (arbitrary timesteps)
 | Attribute | Value |
 |-----------|-------|
 | File | `data/thermal_dataset.csv` |
 | Size | 8.4 GB |
 | Rows | 101M |
 | Columns | home_id, timestamp, state, split, Indoor_AverageTemperature, Outdoor_Temperature, Indoor_HeatSetpoint, Indoor_CoolSetpoint |
+
+**Setpoint Response Dataset** (goal-oriented episodes)
+| Attribute | Value |
+|-----------|-------|
+| File | `data/setpoint_responses.parquet` |
+| Size | 72 MB |
+| Rows | 1.9M |
+| Episodes | 159K (102K heat_increase, 57K cool_decrease) |
+| Use case | Predict temp trajectory after setpoint change |
+
+See `docs/SETPOINT_RESPONSES.md` for details.
 
 ### Geographic Distribution
 | State | Total | Train | Val | Test |
@@ -83,12 +170,20 @@ Curated subset from LBNL containing smart thermostat data from ~1,000 single-fam
 - `-9999` for HVAC_Mode
 - Empty string for Schedule/Event
 
+## Next Steps
+
+1. **Two-stage early update** - After 10-15 min, use observed progress to refine prediction
+2. **Quantile regression** - Add P50/P80/P90 predictions for MPC uncertainty bounds
+3. **Cross-home evaluation** - Test generalization to unseen homes (cold start)
+4. **Neural network models** - Try embeddings + MLP for nonlinear transfer
+
 ## Tech Stack
 
 - PyTorch for model training
 - Polars for fast data loading
 - xarray/netCDF4 for raw data
 - scikit-learn for baselines
+- statsmodels for mixed effects models
 
 ## Project Structure
 
@@ -96,18 +191,32 @@ Curated subset from LBNL containing smart thermostat data from ~1,000 single-fam
 thermal/
 ├── CLAUDE.md                           # This file
 ├── data/
-│   └── thermal_dataset.csv             # Prepared dataset (8.4 GB)
+│   ├── thermal_dataset.csv             # Flat dataset (8.4 GB)
+│   └── setpoint_responses.parquet      # Setpoint response episodes (72 MB)
 ├── scripts/
 │   ├── prepare_dataset.py              # Creates thermal_dataset.csv
-│   └── run_baselines.py                # Runs all baseline models
+│   ├── extract_setpoint_responses.py   # Creates setpoint_responses.parquet
+│   ├── run_baselines.py                # Flat dataset baselines
+│   ├── run_setpoint_baselines.py       # Setpoint response baselines
+│   ├── run_time_to_target.py           # Time-to-target baselines (linear)
+│   ├── run_improved_baselines.py       # Log-duration + hierarchical models ★
+│   ├── run_xgboost_baselines.py        # Gradient boosting models ★
+│   └── analyze_errors.py               # Error analysis script ★
 ├── docs/
 │   ├── BASELINE_MODELS.md              # Detailed model descriptions
 │   ├── BASELINE_RESULTS.md             # Results and analysis
-│   └── DATA_ANALYSIS.md                # Temperature change distributions
+│   ├── DATA_ANALYSIS.md                # Temperature change distributions
+│   ├── SETPOINT_RESPONSES.md           # Setpoint response dataset docs
+│   ├── SETPOINT_BASELINES.md           # Setpoint response baseline docs
+│   ├── TIME_TO_TARGET.md               # Time-to-target prediction docs
+│   ├── PREDICTION_TASK_BRIEF.md        # Task brief for external collaborators
+│   ├── DEEP_LEARNING_BRIEF.md          # Deep learning consultation prompt ★
+│   └── citylearn_datasets.md           # CityLearn simulation datasets
 ├── plans/
 │   ├── BASELINE_PLAN.md                # Baseline experiment plan
 │   ├── DATA_PLAN.md                    # Data preparation plan
-│   └── RNN_PLAN.md                     # RNN experiment plan
+│   ├── RNN_PLAN.md                     # RNN experiment plan
+│   └── ERROR_ANALYSIS_PLAN.md          # Error analysis & next improvements ★
 ├── ecobee_processed_dataset/
 │   ├── extracted/clean_data/           # Raw NetCDF files (~2.6 GB each)
 │   │   ├── Jan_clean.nc
