@@ -113,21 +113,28 @@ def extract_setpoint_responses(
         start_temp = indoor[i]
         start_time = times[i]
 
-        # Collect rows until temp reaches target (or data ends/gaps)
+        # Collect rows until temp reaches target (or data ends/gaps/setpoint changes)
         episode_rows = []
         j = i
+        reached_target = False
 
         while j < n:
             # Check for missing data
             if indoor[j] == 0 or heat_sp[j] == 0 or cool_sp[j] == 0:
                 break
 
+            # Check if setpoint changed again (end episode early)
+            if j > start_idx:
+                if change_type == "heat_increase" and abs(heat_sp[j] - target) > 0.5:
+                    break  # Heat setpoint changed, end episode
+                elif change_type == "cool_decrease" and abs(cool_sp[j] - target) > 0.5:
+                    break  # Cool setpoint changed, end episode
+
             # Check if target reached
-            reached = False
             if change_type == "heat_increase" and indoor[j] >= target:
-                reached = True
+                reached_target = True
             elif change_type == "cool_decrease" and indoor[j] <= target:
-                reached = True
+                reached_target = True
 
             # Build row
             row = {
@@ -150,12 +157,13 @@ def extract_setpoint_responses(
 
             episode_rows.append(row)
 
-            if reached:
+            if reached_target:
                 break
 
             j += 1
 
-        if episode_rows:
+        # Only keep episodes that reached target (clean data)
+        if episode_rows and reached_target:
             episodes.append(pd.DataFrame(episode_rows))
 
         # Move past this episode

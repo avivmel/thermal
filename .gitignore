@@ -2,6 +2,7 @@
 ecobee_processed_dataset/clean_data/*.nc
 *.nc
 *.csv
+*.parquet
 
 
 # macOS

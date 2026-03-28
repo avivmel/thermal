@@ -1,0 +1,16 @@
+[PASS] Baseline: Energy ratio 1.000
+[PASS] Baseline: Non-negative consumption min=28.15
+[PASS] Baseline: No NaN in consumption 
+[PASS] Baseline: Consumption stats mean=151.6, max=494.6 kW
+[PASS] Feedback_Normal: Energy ratio 0.565
+[PASS] Feedback_Normal: Non-negative consumption min=69.05
+[PASS] Feedback_Normal: No NaN in consumption 
+[PASS] Feedback_Normal: Consumption stats mean=85.7, max=254.9 kW
+[PASS] Feedback_PeakShave: Energy ratio 0.599
+[PASS] Feedback_PeakShave: Non-negative consumption min=15.97
+[PASS] Feedback_PeakShave: No NaN in consumption 
+[PASS] Feedback_PeakShave: Consumption stats mean=90.8, max=254.9 kW
+[PASS] Feedback_Aggressive: Energy ratio 0.650
+[PASS] Feedback_Aggressive: Non-negative consumption min=15.97
+[PASS] Feedback_Aggressive: No NaN in consumption 
+[PASS] Feedback_Aggressive: Consumption stats mean=98.5, max=313.7 kW
