@@ -2,6 +2,10 @@
 
 ML-based thermostat control system for residential HVAC demand response.
 
+## Instructions
+
+Before starting work on this project, read the relevant documentation files in `docs/` to understand the current state of the project, experimental results, and design decisions.
+
 ## Project Goal
 
 Develop a smart thermostat system that reduces peak electricity demand while maintaining occupant comfort, using neural network-based thermal prediction combined with Model Predictive Control (MPC).
@@ -177,6 +181,42 @@ See `docs/SETPOINT_RESPONSES.md` for details.
 3. **Cross-home evaluation** - Test generalization to unseen homes (cold start)
 4. **Neural network models** - Try embeddings + MLP for nonlinear transfer
 
+---
+
+## CityLearn DR Simulation Results
+
+Tested demand response strategies in CityLearn simulation environment. See `docs/CITYLEARN_DR_RESULTS.md` for full details.
+
+### Key Finding
+
+**Simple time-based RBC fails; feedback control with time-varying gains succeeds.**
+
+| Controller | PAR | Peak Load | Energy | Result |
+|------------|-----|-----------|--------|--------|
+| Baseline | 3.26 | 495 kW | 327 MWh | - |
+| Open-loop RBC | 1.54 | 684 kW | 956 MWh | FAILED (3x energy) |
+| **Feedback + PeakShave** | **2.81** | **255 kW** | **196 MWh** | **SUCCESS** |
+
+### Why Open-Loop Failed
+
+Action = fraction of *nominal power*, NOT *heating needed*. Setting `action=0.7` runs heat pump at 70% max power (~20 kW) regardless of actual need (~5 kW), causing massive overheating.
+
+### Why Feedback Worked
+
+```python
+error = setpoint - current_temp
+action = Kp * max(0, error) + bias
+# Kp varies: high during pre-heat (14-16), low during peak (17-20)
+```
+
+Proportional control only heats when needed, time-varying gains shift load from peak to pre-peak hours.
+
+### Implications for MPC
+
+- **Feedback control is the baseline to beat** (14% PAR reduction, 48% peak reduction)
+- **MPC should improve** by optimizing schedule using thermal predictions
+- **CityLearn validated** as simulation platform for DR testing
+
 ## Tech Stack
 
 - PyTorch for model training
@@ -211,7 +251,9 @@ thermal/
 │   ├── TIME_TO_TARGET.md               # Time-to-target prediction docs
 │   ├── PREDICTION_TASK_BRIEF.md        # Task brief for external collaborators
 │   ├── DEEP_LEARNING_BRIEF.md          # Deep learning consultation prompt ★
-│   └── citylearn_datasets.md           # CityLearn simulation datasets
+│   ├── citylearn_datasets.md           # CityLearn simulation datasets
+│   ├── CITYLEARN_DR_EXPERIMENT.md      # DR experiment plan ★
+│   └── CITYLEARN_DR_RESULTS.md         # DR experiment results ★
 ├── plans/
 │   ├── BASELINE_PLAN.md                # Baseline experiment plan
 │   ├── DATA_PLAN.md                    # Data preparation plan
