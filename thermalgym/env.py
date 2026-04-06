@@ -164,8 +164,9 @@ class ThermalEnv:
         # Start EnergyPlus
         self._start_energyplus(date)
 
-        # Wait for first observation (after warmup)
-        self._ep_ready.wait()
+        # Wait for first observation (after warmup) — timeout guards against EP startup failure
+        if not self._ep_ready.wait(timeout=300.0):
+            raise RuntimeError("EnergyPlus did not produce first observation within 5 minutes.")
         self._ep_ready.clear()
 
         if self._ep_exception is not None:
@@ -222,7 +223,8 @@ class ThermalEnv:
             return dict(row)
 
         # Wait for next observation
-        self._ep_ready.wait()
+        if not self._ep_ready.wait(timeout=60.0):
+            raise RuntimeError("EnergyPlus timed out waiting for next timestep.")
         self._ep_ready.clear()
 
         if self._ep_exception is not None:
@@ -293,6 +295,14 @@ class ThermalEnv:
         api = self._api
         state = self._ep_state
 
+        # Request output variables BEFORE the run (required for get_variable_handle to work)
+        zone = self._building.zone_name
+        api.exchange.request_variable(state, "Zone Mean Air Temperature", zone)
+        api.exchange.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
+        api.exchange.request_variable(state, "Facility Total HVAC Electricity Demand Rate", "Whole Building")
+        api.exchange.request_variable(state, "Facility Total Heating Electricity Rate", "Whole Building")
+        api.exchange.request_variable(state, "Facility Total Cooling Electricity Rate", "Whole Building")
+
         def _ep_callback(state_handle) -> None:
             try:
                 # Skip warmup timesteps
@@ -303,7 +313,7 @@ class ThermalEnv:
                     api.runtime.stop_simulation(state_handle)
                     return
 
-                # Initialize handles once
+                # Initialize handles once (after warmup, variables are fully registered)
                 if not self._handles_initialized:
                     self._get_handles(state_handle)
                     self._handles_initialized = True
@@ -312,31 +322,30 @@ class ThermalEnv:
                 obs = self._read_obs(state_handle)
                 self._current_obs = obs
 
+                # Write setpoints from previous action (actuators persist across timesteps)
+                self._write_setpoints(state_handle, self._pending_action)
+
                 # Signal Python that obs is ready
                 self._ep_ready.set()
 
-                # Wait for Python to write action
+                # Wait for Python to provide next action
                 self._py_ready.wait()
                 self._py_ready.clear()
 
                 if self._stop_flag.is_set():
                     api.runtime.stop_simulation(state_handle)
-                    return
-
-                # Write setpoints
-                self._write_setpoints(state_handle, self._pending_action)
 
             except Exception as e:
                 self._ep_exception = e
                 self._ep_ready.set()  # Unblock waiting Python thread
                 api.runtime.stop_simulation(state_handle)
 
-        api.runtime.callback_begin_zone_timestep_after_init_heat_balance(state, _ep_callback)
+        # Use end-of-timestep callback so all output variables are computed
+        api.runtime.callback_end_zone_timestep_after_zone_reporting(state, _ep_callback)
 
         def _run_ep():
             try:
                 argv = [
-                    "energyplus",
                     "-w", str(self._epw_path),
                     "-d", str(run_idf.parent),
                     str(run_idf),
@@ -403,10 +412,13 @@ class ThermalEnv:
         ts = pd.Timestamp(year=ep_year, month=ep_month, day=ep_day)
         day_of_week = ts.dayofweek  # 0=Monday
 
+        def c_to_f(c: float) -> float:
+            return c * 9.0 / 5.0 + 32.0
+
         return {
             "timestamp": ts + pd.Timedelta(hours=ep_hour),
-            "indoor_temp": float(indoor_temp),
-            "outdoor_temp": float(outdoor_temp),
+            "indoor_temp": c_to_f(indoor_temp),
+            "outdoor_temp": c_to_f(outdoor_temp),
             "hvac_power_kw": float(hvac_power_w) / 1000.0,
             "hvac_mode": hvac_mode,
             "heat_setpoint": self._current_heat_sp,
@@ -418,12 +430,15 @@ class ThermalEnv:
         }
 
     def _write_setpoints(self, state, action: dict) -> None:
-        """Write clamped setpoints via actuators."""
+        """Write clamped setpoints via actuators. EnergyPlus expects °C."""
+        def f_to_c(f: float) -> float:
+            return (f - 32.0) * 5.0 / 9.0
+
         api = self._api
-        heat = float(np.clip(action["heat_setpoint"], HEAT_MIN, HEAT_MAX))
-        cool = float(np.clip(action["cool_setpoint"], COOL_MIN, COOL_MAX))
-        api.exchange.set_actuator_value(state, self._heat_sp_handle, heat)
-        api.exchange.set_actuator_value(state, self._cool_sp_handle, cool)
+        heat_f = float(np.clip(action["heat_setpoint"], HEAT_MIN, HEAT_MAX))
+        cool_f = float(np.clip(action["cool_setpoint"], COOL_MIN, COOL_MAX))
+        api.exchange.set_actuator_value(state, self._heat_sp_handle, f_to_c(heat_f))
+        api.exchange.set_actuator_value(state, self._cool_sp_handle, f_to_c(cool_f))
 
     def _patch_idf_deadband(self, deadband_f: float) -> Path:
         """
