@@ -476,8 +476,8 @@ class ThermalEnv:
 
     def _patch_idf_run_period(self, idf_path: Path, start_date: str) -> Path:
         """
-        Write a copy of the IDF with RunPeriod patched to cover start_date
-        through start_date + run_period_days. Returns path to patched IDF.
+        Write a copy of the IDF with RunPeriod and Timestep patched.
+        Returns path to patched IDF.
         """
         import re
 
@@ -485,6 +485,15 @@ class ThermalEnv:
         end = start + pd.Timedelta(days=self._run_period_days - 1)
 
         idf_text = idf_path.read_text(encoding="utf-8", errors="replace")
+
+        # Patch Timestep to match timestep_minutes
+        timesteps_per_hour = 60 // self._timestep_minutes
+        idf_text = re.sub(
+            r'^\s*Timestep\s*,\s*\d+\s*;',
+            f'Timestep,{timesteps_per_hour};',
+            idf_text,
+            flags=re.MULTILINE | re.IGNORECASE,
+        )
 
         # Replace RunPeriod begin/end month and day fields
         # Standard IDF RunPeriod format:
