@@ -212,18 +212,17 @@ def sample_data(
     return sampled_df
 
 
-def create_episode_samples(df: pl.DataFrame, train_frac: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def create_episode_samples(df: pl.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """
     Create episode-level samples for time-to-boundary prediction.
 
-    Evaluation only uses episodes with observed boundary crossings.
+    Uses the dataset's home-level split assignment:
+    - `train` homes for model fitting
+    - `test` homes for final evaluation
+    - `val` homes are held out from both by default
     """
-    print(
-        f"Creating episode-level samples ({train_frac:.0%} train, "
-        f"max {MAX_TIME_TO_BOUNDARY} min)..."
-    )
+    print(f"Creating episode-level samples (dataset split, max {MAX_TIME_TO_BOUNDARY} min)...")
     t0 = time.time()
-    np.random.seed(42)
 
     df = df.filter(pl.col("crossed_boundary") == True)
 
@@ -235,12 +234,8 @@ def create_episode_samples(df: pl.DataFrame, train_frac: float = 0.7) -> tuple[p
         home_df = df.filter(pl.col("home_id") == home)
         episodes = home_df["episode_id"].unique().to_list()
 
-        if len(episodes) < 2:
+        if len(episodes) < 1:
             continue
-
-        np.random.shuffle(episodes)
-        n_train = max(1, int(len(episodes) * train_frac))
-        train_episodes = set(episodes[:n_train])
 
         for ep_id in episodes:
             ep = home_df.filter(pl.col("episode_id") == ep_id).sort("timestep_idx")
@@ -288,13 +283,15 @@ def create_episode_samples(df: pl.DataFrame, train_frac: float = 0.7) -> tuple[p
             indoor_humidity = 50 if pd.isna(indoor_humidity) else indoor_humidity
             outdoor_humidity = 50 if pd.isna(outdoor_humidity) else outdoor_humidity
 
-            is_train = ep_id in train_episodes
+            is_train = split == "train"
+            is_test = split == "test"
 
             records.append(
                 {
                     "home_id": home,
                     "episode_id": ep_id,
                     "is_train": is_train,
+                    "is_test": is_test,
                     "state": state,
                     "split": split,
                     "drift_direction": drift_direction,
@@ -352,10 +349,12 @@ def create_episode_samples(df: pl.DataFrame, train_frac: float = 0.7) -> tuple[p
 
     all_df = pd.DataFrame(records)
     train_df = all_df[all_df["is_train"]].copy()
-    test_df = all_df[~all_df["is_train"]].copy()
+    test_df = all_df[all_df["is_test"]].copy()
+    val_df = all_df[(~all_df["is_train"]) & (~all_df["is_test"])].copy()
 
     print(f"  Train: {len(train_df):,} episodes")
     print(f"  Test: {len(test_df):,} episodes")
+    print(f"  Val held out: {len(val_df):,} episodes")
     print(
         f"  Time-to-boundary - Mean: {all_df['time_to_boundary_min'].mean():.1f} min, "
         f"Median: {all_df['time_to_boundary_min'].median():.1f} min"
@@ -773,7 +772,7 @@ def main():
         sample_episodes=args.sample_episodes,
         seed=args.seed,
     )
-    train_df, test_df, trajectories = create_episode_samples(df, train_frac=0.7)
+    train_df, test_df, trajectories = create_episode_samples(df)
 
     print()
     print("Running drift models...")
