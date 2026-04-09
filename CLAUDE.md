@@ -151,7 +151,18 @@ Curated subset from LBNL containing smart thermostat data from ~1,000 single-fam
 | Episodes | 159K (102K heat_increase, 57K cool_decrease) |
 | Use case | Predict temp trajectory after setpoint change |
 
-See `docs/SETPOINT_RESPONSES.md` for details.
+**Drift Episode Dataset** (HVAC-off thermal drift)
+| Attribute | Value |
+|-----------|-------|
+| File | `data/drift_episodes.parquet` |
+| Rows | 7.29M |
+| Episodes | 403K |
+| Use case | Predict minutes until comfort-band violation while HVAC stays off |
+| Episode definition | HVAC-off intervals with \|indoor - outdoor\| > 3F, truncated at first comfort-boundary crossing |
+| Target | `time_to_boundary_min` |
+| Key fields | `target_boundary`, `boundary_temp`, `distance_to_boundary`, `signed_boundary_gap`, recent indoor/outdoor slopes |
+
+See `docs/SETPOINT_RESPONSES.md` for active episodes and `docs/DRIFT_BOUNDARY_PREDICTION.md` for the drift formulation.
 
 ### Geographic Distribution
 | State | Total | Train | Val | Test |
@@ -174,12 +185,60 @@ See `docs/SETPOINT_RESPONSES.md` for details.
 - `-9999` for HVAC_Mode
 - Empty string for Schedule/Event
 
+## Active/Drift Model Split
+
+For MPC we model the full thermal cycle with separate models:
+- **Active model**: HVAC on, driving temp toward setpoint ("how long to reach target?")
+- **Drift model**: HVAC off, temp drifting toward the relevant comfort boundary ("how many minutes until the home leaves the comfort band?")
+
+### Active Model Results (re-trained, all episodes)
+
+| Model | MAE | Median | P90 |
+|-------|-----|--------|-----|
+| Global GBM | 20.9 min | 11.0 min | 51.8 min |
+| GBM + Home Encoding | 18.9 min | 9.6 min | 46.6 min |
+| Per-Home GBM | 19.0 min | 9.3 min | 47.9 min |
+| Hybrid GBM | 18.9 min | 9.5 min | 47.1 min |
+
+Consistent with prior results. `system_running` remains key: 15.9 MAE running vs 29.8 not running.
+
+### Drift Model Results (10-home test run, reformulated)
+
+| Model | MAE | Median | P90 |
+|-------|-----|--------|-----|
+| Global Newton k | 76.1 min | 43.5 min | 162.1 min |
+| Per-Home Newton k | 42.4 min | 25.2 min | 95.0 min |
+| Global GBM | 36.7 min | 17.4 min | 91.3 min |
+| **GBM + Home Enc** | **32.5 min** | **13.4 min** | **85.2 min** |
+| Hybrid GBM | 36.6 min | 17.3 min | 90.3 min |
+
+Reformulated drift target:
+- `cooling_drift`: minutes until `indoor_temp >= cool_setpoint` while HVAC remains off
+- `warming_drift`: minutes until `indoor_temp <= heat_setpoint` while HVAC remains off
+
+10-home test extraction summary:
+- Candidate HVAC-off intervals: 7,238
+- Observed boundary crossings kept: 326 (4.5%)
+- Dropped without crossing: 679
+
+Full-data extraction summary:
+- Candidate HVAC-off intervals: 4,609,481
+- Observed boundary crossings kept: 403,299 (8.7%)
+- Dropped without crossing: 1,334,052
+- Direction mix: 261,966 `cooling_drift`, 141,333 `warming_drift`
+- Split mix: 280,896 train, 37,126 val, 85,277 test
+- Time-to-boundary: mean 85.4 min, median 25.0 min, P90 230 min
+- Distance-to-boundary: mean 1.7 F, median 1.0 F
+
+*Note: Full-data extraction is complete. The full baseline fit was started on the all-data parquet, but the run did not finish within the execution window, so full-data model metrics are not yet recorded here.*
+
 ## Next Steps
 
-1. **Two-stage early update** - After 10-15 min, use observed progress to refine prediction
-2. **Quantile regression** - Add P50/P80/P90 predictions for MPC uncertainty bounds
-3. **Cross-home evaluation** - Test generalization to unseen homes (cold start)
-4. **Neural network models** - Try embeddings + MLP for nonlinear transfer
+1. **Finish full drift baseline evaluation** - `python3 scripts/run_drift_baselines.py`
+2. **Two-stage early update** - After 10-15 min, use observed progress to refine prediction
+3. **Quantile regression** - Add P50/P80/P90 predictions for MPC uncertainty bounds
+4. **Cross-home evaluation** - Test generalization to unseen homes (cold start)
+5. **Neural network models** - Try embeddings + MLP for nonlinear transfer
 
 ---
 
@@ -232,7 +291,8 @@ thermal/
 ├── CLAUDE.md                           # This file
 ├── data/
 │   ├── thermal_dataset.csv             # Flat dataset (8.4 GB)
-│   └── setpoint_responses.parquet      # Setpoint response episodes (72 MB)
+│   ├── setpoint_responses.parquet      # Setpoint response episodes (72 MB)
+│   └── drift_episodes.parquet          # Drift episodes (HVAC off) ★
 ├── scripts/
 │   ├── prepare_dataset.py              # Creates thermal_dataset.csv
 │   ├── extract_setpoint_responses.py   # Creates setpoint_responses.parquet
@@ -241,6 +301,9 @@ thermal/
 │   ├── run_time_to_target.py           # Time-to-target baselines (linear)
 │   ├── run_improved_baselines.py       # Log-duration + hierarchical models ★
 │   ├── run_xgboost_baselines.py        # Gradient boosting models ★
+│   ├── extract_drift_episodes.py       # Creates drift_episodes.parquet ★
+│   ├── run_drift_baselines.py          # Drift model baselines (Newton + GBM) ★
+│   ├── run_active_baselines.py         # Active model baselines (re-trained) ★
 │   └── analyze_errors.py               # Error analysis script ★
 ├── docs/
 │   ├── BASELINE_MODELS.md              # Detailed model descriptions
@@ -258,7 +321,8 @@ thermal/
 │   ├── BASELINE_PLAN.md                # Baseline experiment plan
 │   ├── DATA_PLAN.md                    # Data preparation plan
 │   ├── RNN_PLAN.md                     # RNN experiment plan
-│   └── ERROR_ANALYSIS_PLAN.md          # Error analysis & next improvements ★
+│   ├── ERROR_ANALYSIS_PLAN.md          # Error analysis & next improvements ★
+│   └── ACTIVE_DRIFT_SPLIT.md          # Active/drift model split plan ★
 ├── ecobee_processed_dataset/
 │   ├── extracted/clean_data/           # Raw NetCDF files (~2.6 GB each)
 │   │   ├── Jan_clean.nc
