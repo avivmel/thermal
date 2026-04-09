@@ -2,13 +2,13 @@
 Extract drift episodes from Ecobee data.
 
 Drift = HVAC off, temperature drifting toward outdoor ambient.
-Used for training drift thermal models for MPC.
+Used for training passive thermal models for MPC.
 
 Episode definition:
 - Start: All available runtime columns = 0, |indoor - outdoor| > 3F
 - End: Any runtime > 0, setpoint changes > 1F, or data gap
-- Min duration: 15 min (3 timesteps at 5-min resolution)
-- Filter: |end_temp - start_temp| > 0.5F (need actual temp change)
+- Label: first passage time to the relevant comfort boundary
+- Keep only episodes with an observed boundary crossing
 """
 
 import argparse
@@ -46,11 +46,68 @@ KEEP_COLUMNS = [
     "Outdoor_Humidity",
 ]
 
-MIN_DELTA_F = 3.0       # Minimum |indoor - outdoor| to start episode
-MIN_DURATION_STEPS = 3  # 15 minutes
-MIN_TEMP_CHANGE = 0.5   # Must see actual temp movement
+MIN_DELTA_F = 3.0
+MIN_TIME_TO_BOUNDARY_MIN = 15
 MAX_SETPOINT_CHANGE = 1.0  # End episode if setpoint changes more than this
 MAX_GAP_STEPS = 2       # End episode if data gap > 2 timesteps (10 min)
+SLOPE_WINDOWS = {
+    "15m": 3,
+    "30m": 6,
+}
+
+
+def is_missing_temp(value: float) -> bool:
+    return value == 0 or np.isnan(value)
+
+
+def has_gap(times: np.ndarray, prev_idx: int, cur_idx: int) -> bool:
+    prev_ts = pd.Timestamp(times[prev_idx])
+    cur_ts = pd.Timestamp(times[cur_idx])
+    gap_minutes = (cur_ts - prev_ts).total_seconds() / 60.0
+    return gap_minutes > MAX_GAP_STEPS * 5
+
+
+def is_hvac_running(runtime_arrays: list, idx: int) -> bool:
+    for rt in runtime_arrays:
+        val = rt[idx]
+        if not np.isnan(val) and val > 0:
+            return True
+    return False
+
+
+def compute_recent_slope(values: np.ndarray, times: np.ndarray, end_idx: int, window_steps: int) -> float:
+    """Compute average slope in F/hour over the preceding window ending at end_idx."""
+    start_idx = end_idx - window_steps
+    if start_idx < 0:
+        return np.nan
+
+    for idx in range(start_idx, end_idx + 1):
+        if is_missing_temp(values[idx]):
+            return np.nan
+        if idx > start_idx and has_gap(times, idx - 1, idx):
+            return np.nan
+
+    elapsed_hours = (pd.Timestamp(times[end_idx]) - pd.Timestamp(times[start_idx])).total_seconds() / 3600.0
+    if elapsed_hours <= 0:
+        return np.nan
+    return (values[end_idx] - values[start_idx]) / elapsed_hours
+
+
+def compute_time_since_hvac_off(times: np.ndarray, indoor: np.ndarray, outdoor: np.ndarray,
+                                runtime_arrays: list, start_idx: int) -> float:
+    """Minutes since HVAC last turned off, counting the contiguous off segment before the episode start."""
+    idx = start_idx
+    while idx > 0:
+        prev_idx = idx - 1
+        if has_gap(times, prev_idx, idx):
+            break
+        if is_missing_temp(indoor[prev_idx]) or is_missing_temp(outdoor[prev_idx]):
+            break
+        if is_hvac_running(runtime_arrays, prev_idx):
+            break
+        idx = prev_idx
+
+    return (pd.Timestamp(times[start_idx]) - pd.Timestamp(times[idx])).total_seconds() / 60.0
 
 
 def load_home_splits() -> dict:
@@ -88,14 +145,14 @@ def extract_drift_episodes(
     runtime_cols: list,
     state: str,
     split: str,
-) -> list:
+) -> tuple[list, dict]:
     """
     Extract drift episodes for one home.
 
-    A drift episode is a contiguous period where:
+    A drift episode is a contiguous HVAC-off period where:
     - All available HVAC runtimes are 0
     - |indoor - outdoor| > MIN_DELTA_F at start
-    - Temperature actually changes during the episode
+    - The indoor temperature reaches the relevant comfort boundary
     """
     indoor = data["Indoor_AverageTemperature"]
     outdoor = data["Outdoor_Temperature"]
@@ -107,22 +164,21 @@ def extract_drift_episodes(
 
     n = len(times)
     episodes = []
+    stats = {
+        "candidate_intervals": 0,
+        "crossed_intervals": 0,
+        "dropped_no_crossing": 0,
+    }
     i = 0
 
     while i < n:
         # Skip missing data
-        if indoor[i] == 0 or outdoor[i] == 0 or np.isnan(indoor[i]) or np.isnan(outdoor[i]):
+        if is_missing_temp(indoor[i]) or is_missing_temp(outdoor[i]):
             i += 1
             continue
 
         # Check: all runtimes must be 0
-        any_running = False
-        for rt in runtime_arrays:
-            val = rt[i]
-            if not np.isnan(val) and val > 0:
-                any_running = True
-                break
-        if any_running:
+        if is_hvac_running(runtime_arrays, i):
             i += 1
             continue
 
@@ -132,7 +188,8 @@ def extract_drift_episodes(
             i += 1
             continue
 
-        # Start of a potential drift episode
+        # Start of a potential HVAC-off interval.
+        stats["candidate_intervals"] += 1
         start_idx = i
         start_temp = indoor[i]
         start_outdoor = outdoor[i]
@@ -142,18 +199,15 @@ def extract_drift_episodes(
         # Collect timesteps until episode ends
         j = i + 1
         while j < n:
+            if has_gap(times, j - 1, j):
+                break
+
             # Data gap check
-            if indoor[j] == 0 or outdoor[j] == 0 or np.isnan(indoor[j]) or np.isnan(outdoor[j]):
+            if is_missing_temp(indoor[j]) or is_missing_temp(outdoor[j]):
                 break
 
             # Runtime check - any equipment turns on?
-            equip_on = False
-            for rt in runtime_arrays:
-                val = rt[j]
-                if not np.isnan(val) and val > 0:
-                    equip_on = True
-                    break
-            if equip_on:
+            if is_hvac_running(runtime_arrays, j):
                 break
 
             # Setpoint change check
@@ -167,33 +221,63 @@ def extract_drift_episodes(
             j += 1
 
         end_idx = j  # exclusive
-        n_steps = end_idx - start_idx
-
-        # Duration filter
-        if n_steps < MIN_DURATION_STEPS:
-            i = end_idx
-            continue
-
-        # Temperature change filter
-        end_temp = indoor[end_idx - 1]
-        if abs(end_temp - start_temp) < MIN_TEMP_CHANGE:
-            i = end_idx
-            continue
-
-        # Determine drift direction
         initial_delta = start_temp - start_outdoor
-        if initial_delta > 0:
-            # Indoor warmer than outdoor -> cooling drift (temp falls toward outdoor)
+
+        # Match the reformulated task:
+        # - cooling_drift -> time until indoor reaches the cooling boundary
+        # - warming_drift -> time until indoor reaches the heating boundary
+        if initial_delta < 0:
             drift_direction = "cooling_drift"
+            target_boundary = "cool_setpoint"
+            boundary_temp = start_cool_sp
+            crossing_mask = indoor[start_idx:end_idx] >= boundary_temp
         else:
-            # Indoor cooler than outdoor -> warming drift (temp rises toward outdoor)
             drift_direction = "warming_drift"
+            target_boundary = "heat_setpoint"
+            boundary_temp = start_heat_sp
+            crossing_mask = indoor[start_idx:end_idx] <= boundary_temp
+
+        if boundary_temp == 0 or np.isnan(boundary_temp):
+            i = end_idx
+            continue
+
+        signed_boundary_gap = boundary_temp - start_temp
+        distance_to_boundary = abs(signed_boundary_gap)
+
+        # The episode should start inside the comfort band and move toward the boundary.
+        if distance_to_boundary <= 0:
+            i = end_idx
+            continue
+
+        crossing_indices = np.flatnonzero(crossing_mask)
+        if len(crossing_indices) == 0:
+            stats["dropped_no_crossing"] += 1
+            i = end_idx
+            continue
+
+        crossing_timestep_idx = int(crossing_indices[0])
+        time_to_boundary_min = crossing_timestep_idx * 5
+
+        if time_to_boundary_min < MIN_TIME_TO_BOUNDARY_MIN:
+            i = end_idx
+            continue
+
+        crossing_end_idx = start_idx + crossing_timestep_idx + 1
+        stats["crossed_intervals"] += 1
+
+        indoor_slope_15m = compute_recent_slope(indoor, times, start_idx, SLOPE_WINDOWS["15m"])
+        indoor_slope_30m = compute_recent_slope(indoor, times, start_idx, SLOPE_WINDOWS["30m"])
+        outdoor_slope_15m = compute_recent_slope(outdoor, times, start_idx, SLOPE_WINDOWS["15m"])
+        outdoor_slope_30m = compute_recent_slope(outdoor, times, start_idx, SLOPE_WINDOWS["30m"])
+        time_since_hvac_off_min = compute_time_since_hvac_off(
+            times, indoor, outdoor, runtime_arrays, start_idx
+        )
 
         # Build episode rows
         ep_id = f"{home_id}_drift_{pd.Timestamp(times[start_idx]).isoformat()}"
         episode_rows = []
 
-        for k in range(start_idx, end_idx):
+        for k in range(start_idx, crossing_end_idx):
             row = {
                 "home_id": home_id,
                 "state": state,
@@ -205,6 +289,18 @@ def extract_drift_episodes(
                 "start_temp": start_temp,
                 "start_outdoor": start_outdoor,
                 "initial_delta": initial_delta,
+                "target_boundary": target_boundary,
+                "boundary_temp": boundary_temp,
+                "crossed_boundary": True,
+                "crossing_timestep_idx": crossing_timestep_idx,
+                "time_to_boundary_min": time_to_boundary_min,
+                "distance_to_boundary": distance_to_boundary,
+                "signed_boundary_gap": signed_boundary_gap,
+                "recent_indoor_slope_15m": indoor_slope_15m,
+                "recent_indoor_slope_30m": indoor_slope_30m,
+                "recent_outdoor_slope_15m": outdoor_slope_15m,
+                "recent_outdoor_slope_30m": outdoor_slope_30m,
+                "time_since_hvac_off_min": time_since_hvac_off_min,
             }
             for col in KEEP_COLUMNS:
                 if col in data:
@@ -214,7 +310,7 @@ def extract_drift_episodes(
         episodes.append(pd.DataFrame(episode_rows))
         i = end_idx
 
-    return episodes
+    return episodes, stats
 
 
 def process_month(month: str, home_splits: dict, max_homes: int = None) -> pd.DataFrame:
@@ -246,6 +342,11 @@ def process_month(month: str, home_splits: dict, max_homes: int = None) -> pd.Da
         all_data[col] = ds[col].values
 
     all_episodes = []
+    summary = {
+        "candidate_intervals": 0,
+        "crossed_intervals": 0,
+        "dropped_no_crossing": 0,
+    }
 
     for idx, home_id in enumerate(tqdm(home_ids, desc=f"  {month}", leave=False)):
         home_data = {col: arr[idx] for col, arr in all_data.items()}
@@ -256,7 +357,7 @@ def process_month(month: str, home_splits: dict, max_homes: int = None) -> pd.Da
             # No runtime data at all - skip home (can't determine HVAC state)
             continue
 
-        episodes = extract_drift_episodes(
+        episodes, stats = extract_drift_episodes(
             home_id=home_id,
             times=times,
             data=home_data,
@@ -265,12 +366,14 @@ def process_month(month: str, home_splits: dict, max_homes: int = None) -> pd.Da
             split=home_splits[home_id],
         )
         all_episodes.extend(episodes)
+        for key, value in stats.items():
+            summary[key] += value
 
     ds.close()
 
     if all_episodes:
-        return pd.concat(all_episodes, ignore_index=True)
-    return pd.DataFrame()
+        return pd.concat(all_episodes, ignore_index=True), summary
+    return pd.DataFrame(), summary
 
 
 def main(test_mode: bool = False, n_homes: int = 10):
@@ -285,8 +388,15 @@ def main(test_mode: bool = False, n_homes: int = 10):
     months = ["Jan"] if test_mode else MONTHS
 
     all_dfs = []
+    aggregate_summary = {
+        "candidate_intervals": 0,
+        "crossed_intervals": 0,
+        "dropped_no_crossing": 0,
+    }
     for month in tqdm(months, desc="Months"):
-        df = process_month(month, home_splits, max_homes=n_homes if test_mode else None)
+        df, summary = process_month(month, home_splits, max_homes=n_homes if test_mode else None)
+        for key, value in summary.items():
+            aggregate_summary[key] += value
         if len(df) > 0:
             all_dfs.append(df)
 
@@ -299,22 +409,22 @@ def main(test_mode: bool = False, n_homes: int = 10):
         print(f"  Rows: {len(result):,}")
         print(f"  Episodes: {n_episodes:,}")
         print(f"  By direction: {result.groupby('drift_direction').episode_id.nunique().to_dict()}")
+        print(f"  By boundary: {result.groupby('target_boundary').episode_id.nunique().to_dict()}")
         print(f"  By split: {result.groupby('split').episode_id.nunique().to_dict()}")
+        if aggregate_summary["candidate_intervals"] > 0:
+            crossed_frac = aggregate_summary["crossed_intervals"] / aggregate_summary["candidate_intervals"]
+            print(f"\n  Candidate HVAC-off intervals: {aggregate_summary['candidate_intervals']:,}")
+            print(f"  Observed boundary crossings: {aggregate_summary['crossed_intervals']:,} ({crossed_frac:.1%})")
+            print(f"  Dropped without crossing: {aggregate_summary['dropped_no_crossing']:,}")
 
-        # Duration stats
-        dur = result.groupby("episode_id").size() * 5  # minutes
-        print(f"\n  Duration stats (minutes):")
-        print(f"    Mean: {dur.mean():.1f}, Median: {dur.median():.1f}")
-        print(f"    P10: {dur.quantile(0.1):.0f}, P90: {dur.quantile(0.9):.0f}")
+        time_to_boundary = result.groupby("episode_id")["time_to_boundary_min"].first()
+        print(f"\n  Time-to-boundary stats (minutes):")
+        print(f"    Mean: {time_to_boundary.mean():.1f}, Median: {time_to_boundary.median():.1f}")
+        print(f"    P10: {time_to_boundary.quantile(0.1):.0f}, P90: {time_to_boundary.quantile(0.9):.0f}")
 
-        # Temperature change stats
-        ep_temps = result.groupby("episode_id").agg(
-            start=("Indoor_AverageTemperature", "first"),
-            end=("Indoor_AverageTemperature", "last"),
-        )
-        ep_temps["change"] = (ep_temps["end"] - ep_temps["start"]).abs()
-        print(f"\n  Temp change stats (F):")
-        print(f"    Mean: {ep_temps['change'].mean():.1f}, Median: {ep_temps['change'].median():.1f}")
+        boundary_gap = result.groupby("episode_id")["distance_to_boundary"].first()
+        print(f"\n  Distance-to-boundary stats (F):")
+        print(f"    Mean: {boundary_gap.mean():.1f}, Median: {boundary_gap.median():.1f}")
     else:
         print("No drift episodes found!")
 

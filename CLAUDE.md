@@ -155,10 +155,14 @@ Curated subset from LBNL containing smart thermostat data from ~1,000 single-fam
 | Attribute | Value |
 |-----------|-------|
 | File | `data/drift_episodes.parquet` |
-| Use case | Predict thermal drift rate when HVAC is off |
-| Episode definition | All HVAC runtimes = 0, \|indoor - outdoor\| > 3F |
+| Rows | 7.29M |
+| Episodes | 403K |
+| Use case | Predict minutes until comfort-band violation while HVAC stays off |
+| Episode definition | HVAC-off intervals with \|indoor - outdoor\| > 3F, truncated at first comfort-boundary crossing |
+| Target | `time_to_boundary_min` |
+| Key fields | `target_boundary`, `boundary_temp`, `distance_to_boundary`, `signed_boundary_gap`, recent indoor/outdoor slopes |
 
-See `docs/SETPOINT_RESPONSES.md` for details on the setpoint response dataset.
+See `docs/SETPOINT_RESPONSES.md` for active episodes and `docs/DRIFT_BOUNDARY_PREDICTION.md` for the drift formulation.
 
 ### Geographic Distribution
 | State | Total | Train | Val | Test |
@@ -185,7 +189,7 @@ See `docs/SETPOINT_RESPONSES.md` for details on the setpoint response dataset.
 
 For MPC we model the full thermal cycle with separate models:
 - **Active model**: HVAC on, driving temp toward setpoint ("how long to reach target?")
-- **Drift model**: HVAC off, temp drifting toward outdoor ("how fast does the home lose/gain heat?")
+- **Drift model**: HVAC off, temp drifting toward the relevant comfort boundary ("how many minutes until the home leaves the comfort band?")
 
 ### Active Model Results (re-trained, all episodes)
 
@@ -198,21 +202,39 @@ For MPC we model the full thermal cycle with separate models:
 
 Consistent with prior results. `system_running` remains key: 15.9 MAE running vs 29.8 not running.
 
-### Drift Model Results (10-home test run)
+### Drift Model Results (10-home test run, reformulated)
 
 | Model | MAE | Median | P90 |
 |-------|-----|--------|-----|
-| Global Newton k | 39.9 min | 10.3 min | 111.5 min |
-| Per-Home Newton k | 34.6 min | 8.8 min | 97.6 min |
-| Global GBM | 35.8 min | 10.6 min | 93.2 min |
-| **GBM + Home Enc** | **30.9 min** | **9.1 min** | **96.3 min** |
-| Hybrid GBM | 35.2 min | 10.3 min | 92.6 min |
+| Global Newton k | 76.1 min | 43.5 min | 162.1 min |
+| Per-Home Newton k | 42.4 min | 25.2 min | 95.0 min |
+| Global GBM | 36.7 min | 17.4 min | 91.3 min |
+| **GBM + Home Enc** | **32.5 min** | **13.4 min** | **85.2 min** |
+| Hybrid GBM | 36.6 min | 17.3 min | 90.3 min |
 
-*Note: Drift results from 10-home test extract only. Full-data run pending.*
+Reformulated drift target:
+- `cooling_drift`: minutes until `indoor_temp >= cool_setpoint` while HVAC remains off
+- `warming_drift`: minutes until `indoor_temp <= heat_setpoint` while HVAC remains off
+
+10-home test extraction summary:
+- Candidate HVAC-off intervals: 7,238
+- Observed boundary crossings kept: 326 (4.5%)
+- Dropped without crossing: 679
+
+Full-data extraction summary:
+- Candidate HVAC-off intervals: 4,609,481
+- Observed boundary crossings kept: 403,299 (8.7%)
+- Dropped without crossing: 1,334,052
+- Direction mix: 261,966 `cooling_drift`, 141,333 `warming_drift`
+- Split mix: 280,896 train, 37,126 val, 85,277 test
+- Time-to-boundary: mean 85.4 min, median 25.0 min, P90 230 min
+- Distance-to-boundary: mean 1.7 F, median 1.0 F
+
+*Note: Full-data extraction is complete. The full baseline fit was started on the all-data parquet, but the run did not finish within the execution window, so full-data model metrics are not yet recorded here.*
 
 ## Next Steps
 
-1. **Run drift extraction on full data** - `python3 scripts/extract_drift_episodes.py` (all homes/months)
+1. **Finish full drift baseline evaluation** - `python3 scripts/run_drift_baselines.py`
 2. **Two-stage early update** - After 10-15 min, use observed progress to refine prediction
 3. **Quantile regression** - Add P50/P80/P90 predictions for MPC uncertainty bounds
 4. **Cross-home evaluation** - Test generalization to unseen homes (cold start)
