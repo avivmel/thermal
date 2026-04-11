@@ -2,8 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import pickle
+from typing import Literal
+
 import numpy as np
 import pandas as pd
+
+
+Direction = Literal["heating", "cooling"]
+
+MIN_ACTIVE_MINUTES = 5.0
+MAX_ACTIVE_MINUTES = 240.0
+MIN_DRIFT_MINUTES = 5.0
+MAX_DRIFT_MINUTES = 480.0
+DEFAULT_ACTIVE_MODEL_PATH = Path("models/active_time_xgb.pkl")
+DEFAULT_DRIFT_MODEL_PATH = Path("models/drift_time_xgb.pkl")
 
 
 def _hour_features(timestamp: pd.Timestamp) -> tuple[float, float]:
@@ -16,6 +29,16 @@ def _month_features(timestamp: pd.Timestamp) -> tuple[float, float]:
     return float(np.sin(angle)), float(np.cos(angle))
 
 
+def _as_timestamp(timestamp: pd.Timestamp) -> pd.Timestamp:
+    return timestamp if isinstance(timestamp, pd.Timestamp) else pd.Timestamp(timestamp)
+
+
+def _clip_minutes(value: float, lower: float, upper: float) -> float:
+    if not np.isfinite(value):
+        return upper
+    return float(np.clip(value, lower, upper))
+
+
 @dataclass(frozen=True)
 class PredictorMetadata:
     active_rows: int
@@ -25,7 +48,9 @@ class PredictorMetadata:
 
 
 class FirstPassagePredictor:
-    def predict_heat_time(
+    metadata: PredictorMetadata
+
+    def predict_active_time(
         self,
         current_temp: float,
         target_temp: float,
@@ -33,6 +58,7 @@ class FirstPassagePredictor:
         timestamp: pd.Timestamp,
         system_running: bool,
         home_id: str | None = None,
+        direction: Direction = "heating",
     ) -> float:
         raise NotImplementedError
 
@@ -43,153 +69,66 @@ class FirstPassagePredictor:
         outdoor_temp: float,
         timestamp: pd.Timestamp,
         home_id: str | None = None,
+        direction: Direction = "heating",
     ) -> float:
         raise NotImplementedError
 
 
 @dataclass
-class _RidgeModel:
-    means: np.ndarray
-    scales: np.ndarray
-    weights: np.ndarray
-    bias: float
-    min_target: float
-    max_target: float
+class _GBMArtifact:
+    artifact: dict
+    source: Path
 
     @classmethod
-    def fit(
-        cls,
-        features: np.ndarray,
-        targets: np.ndarray,
-        alpha: float = 1.0,
-    ) -> _RidgeModel:
-        means = features.mean(axis=0)
-        scales = features.std(axis=0)
-        scales[scales < 1e-6] = 1.0
-        x = (features - means) / scales
-        reg = alpha * np.eye(x.shape[1], dtype=float)
-        weights = np.linalg.solve(x.T @ x + reg, x.T @ targets)
-        bias = float(targets.mean())
-        return cls(
-            means=means,
-            scales=scales,
-            weights=weights,
-            bias=bias,
-            min_target=float(targets.min()),
-            max_target=float(targets.max()),
-        )
+    def load(cls, path: str | Path, expected_model_type: str) -> _GBMArtifact:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"model artifact not found: {path}")
+        with path.open("rb") as f:
+            artifact = pickle.load(f)
+        model_type = artifact.get("model_type")
+        if model_type != expected_model_type:
+            raise ValueError(f"expected {expected_model_type!r} in {path}, got {model_type!r}")
+        return cls(artifact=artifact, source=path)
 
-    def predict(self, features: np.ndarray) -> np.ndarray:
-        x = (features - self.means) / self.scales
-        pred = x @ self.weights + self.bias
-        return np.clip(pred, self.min_target, self.max_target)
+    @property
+    def n_train_rows(self) -> int:
+        return int(self.artifact.get("n_train_rows", 0))
 
 
-class PhysicsFallbackPredictor(FirstPassagePredictor):
+class XGBFirstPassagePredictor(FirstPassagePredictor):
     def __init__(
         self,
-        heating_rate_f_per_hour: float = 2.0,
-        passive_loss_rate_per_hour: float = 0.08,
-        min_minutes: float = 5.0,
-    ) -> None:
-        self.heating_rate_f_per_hour = heating_rate_f_per_hour
-        self.passive_loss_rate_per_hour = passive_loss_rate_per_hour
-        self.min_minutes = min_minutes
-
-    def predict_heat_time(
-        self,
-        current_temp: float,
-        target_temp: float,
-        outdoor_temp: float,
-        timestamp: pd.Timestamp,
-        system_running: bool,
-        home_id: str | None = None,
-    ) -> float:
-        gap = max(target_temp - current_temp, 0.0)
-        if gap <= 1e-6:
-            return self.min_minutes
-        thermal_penalty = max(current_temp - outdoor_temp, 0.0) / 40.0
-        running_bonus = 0.85 if system_running else 1.0
-        effective_rate = max(self.heating_rate_f_per_hour * (1.0 - 0.35 * thermal_penalty), 0.4)
-        return max(gap / effective_rate * 60.0 * running_bonus, self.min_minutes)
-
-    def predict_drift_time(
-        self,
-        current_temp: float,
-        boundary_temp: float,
-        outdoor_temp: float,
-        timestamp: pd.Timestamp,
-        home_id: str | None = None,
-    ) -> float:
-        margin = max(current_temp - boundary_temp, 0.0)
-        if margin <= 1e-6:
-            return self.min_minutes
-        drive = max(current_temp - outdoor_temp, 1.0)
-        effective_rate = max(self.passive_loss_rate_per_hour * drive, 0.05)
-        return max(margin / effective_rate * 60.0, self.min_minutes)
-
-
-class FittedFirstPassagePredictor(FirstPassagePredictor):
-    def __init__(
-        self,
-        active_model: _RidgeModel | None,
-        drift_model: _RidgeModel | None,
-        fallback: FirstPassagePredictor | None = None,
-        metadata: PredictorMetadata | None = None,
+        active_model: _GBMArtifact,
+        drift_model: _GBMArtifact,
     ) -> None:
         self.active_model = active_model
         self.drift_model = drift_model
-        self.fallback = fallback or PhysicsFallbackPredictor()
-        self.metadata = metadata or PredictorMetadata(0, 0, "fallback", "fallback")
+        self.metadata = PredictorMetadata(
+            active_rows=active_model.n_train_rows,
+            drift_rows=drift_model.n_train_rows,
+            source_active=str(active_model.source),
+            source_drift=str(drift_model.source),
+        )
 
     @classmethod
-    def from_local_data(
+    def from_model_files(
         cls,
-        active_path: str | Path = "data/setpoint_responses.parquet",
-        drift_path: str | Path = "data/drift_episodes.parquet",
-        max_active_rows: int = 80_000,
-        max_drift_rows: int = 80_000,
-        random_seed: int = 42,
-    ) -> FittedFirstPassagePredictor:
-        active_model = None
-        drift_model = None
-        active_rows = 0
-        drift_rows = 0
-        active_source = "fallback"
-        drift_source = "fallback"
-
-        active_path = Path(active_path)
-        drift_path = Path(drift_path)
-
-        if active_path.exists():
-            active_df = pd.read_parquet(active_path)
-            active_samples = _prepare_active_training_rows(active_df, max_active_rows, random_seed)
-            if len(active_samples) > 0:
-                x_active = np.vstack(active_samples["features"].to_numpy())
-                y_active = np.log(active_samples["duration_min"].to_numpy())
-                active_model = _RidgeModel.fit(x_active, y_active, alpha=2.0)
-                active_rows = len(active_samples)
-                active_source = str(active_path)
-
-        if drift_path.exists():
-            drift_df = pd.read_parquet(drift_path)
-            drift_samples = _prepare_drift_training_rows(drift_df, max_drift_rows, random_seed)
-            if len(drift_samples) > 0:
-                x_drift = np.vstack(drift_samples["features"].to_numpy())
-                y_drift = np.log(drift_samples["duration_min"].to_numpy())
-                drift_model = _RidgeModel.fit(x_drift, y_drift, alpha=2.0)
-                drift_rows = len(drift_samples)
-                drift_source = str(drift_path)
-
-        metadata = PredictorMetadata(
-            active_rows=active_rows,
-            drift_rows=drift_rows,
-            source_active=active_source,
-            source_drift=drift_source,
+        active_model_path: str | Path = DEFAULT_ACTIVE_MODEL_PATH,
+        drift_model_path: str | Path = DEFAULT_DRIFT_MODEL_PATH,
+    ) -> XGBFirstPassagePredictor:
+        return cls(
+            active_model=_GBMArtifact.load(
+                active_model_path,
+                expected_model_type="hybrid_gbm_active_time_to_target",
+            ),
+            drift_model=_GBMArtifact.load(
+                drift_model_path,
+                expected_model_type="gbm_drift_time_to_boundary",
+            ),
         )
-        return cls(active_model=active_model, drift_model=drift_model, metadata=metadata)
 
-    def predict_heat_time(
+    def predict_active_time(
         self,
         current_temp: float,
         target_temp: float,
@@ -197,34 +136,33 @@ class FittedFirstPassagePredictor(FirstPassagePredictor):
         timestamp: pd.Timestamp,
         system_running: bool,
         home_id: str | None = None,
+        direction: Direction = "heating",
     ) -> float:
-        if target_temp <= current_temp + 1e-6 or self.active_model is None:
-            return self.fallback.predict_heat_time(
-                current_temp=current_temp,
-                target_temp=target_temp,
-                outdoor_temp=outdoor_temp,
-                timestamp=timestamp,
-                system_running=system_running,
-                home_id=home_id,
-            )
-        features = _active_feature_vector(
+        gap = _active_gap(current_temp, target_temp, direction)
+        if gap <= 1e-6:
+            return 0.0
+
+        row = _active_feature_row(
             current_temp=current_temp,
             target_temp=target_temp,
             outdoor_temp=outdoor_temp,
-            timestamp=timestamp,
+            timestamp=_as_timestamp(timestamp),
             system_running=system_running,
+            direction=direction,
         )
-        pred_log_minutes = float(self.active_model.predict(features[None, :])[0])
-        pred_minutes = float(np.exp(pred_log_minutes))
-        fallback_minutes = self.fallback.predict_heat_time(
-            current_temp=current_temp,
-            target_temp=target_temp,
-            outdoor_temp=outdoor_temp,
-            timestamp=timestamp,
-            system_running=system_running,
-            home_id=home_id,
-        )
-        return float(np.clip(pred_minutes, 5.0, max(fallback_minutes * 3.0, 15.0)))
+        log_pred = _predict_log_minutes(self.active_model.artifact, row)
+
+        mode = 1 if direction == "heating" else 0
+        if home_id is not None:
+            home_mode_key = (home_id, mode)
+            home_mode_residuals = self.active_model.artifact.get("home_mode_residuals", {})
+            home_residuals = self.active_model.artifact.get("home_residuals", {})
+            if home_mode_key in home_mode_residuals:
+                log_pred += float(home_mode_residuals[home_mode_key])
+            elif home_id in home_residuals:
+                log_pred += float(home_residuals[home_id])
+
+        return _artifact_minutes(self.active_model.artifact, log_pred, MIN_ACTIVE_MINUTES, MAX_ACTIVE_MINUTES)
 
     def predict_drift_time(
         self,
@@ -233,156 +171,105 @@ class FittedFirstPassagePredictor(FirstPassagePredictor):
         outdoor_temp: float,
         timestamp: pd.Timestamp,
         home_id: str | None = None,
+        direction: Direction = "heating",
     ) -> float:
-        if current_temp <= boundary_temp + 1e-6 or self.drift_model is None:
-            return self.fallback.predict_drift_time(
-                current_temp=current_temp,
-                boundary_temp=boundary_temp,
-                outdoor_temp=outdoor_temp,
-                timestamp=timestamp,
-                home_id=home_id,
-            )
-        features = _drift_feature_vector(
+        margin = _drift_margin(current_temp, boundary_temp, direction)
+        if margin <= 1e-6:
+            return 0.0
+
+        row = _drift_feature_row(
             current_temp=current_temp,
             boundary_temp=boundary_temp,
             outdoor_temp=outdoor_temp,
-            timestamp=timestamp,
+            timestamp=_as_timestamp(timestamp),
+            direction=direction,
         )
-        pred_log_minutes = float(self.drift_model.predict(features[None, :])[0])
-        pred_minutes = float(np.exp(pred_log_minutes))
-        fallback_minutes = self.fallback.predict_drift_time(
-            current_temp=current_temp,
-            boundary_temp=boundary_temp,
-            outdoor_temp=outdoor_temp,
-            timestamp=timestamp,
-            home_id=home_id,
-        )
-        return float(np.clip(pred_minutes, 5.0, max(fallback_minutes * 3.0, 15.0)))
+        log_pred = _predict_log_minutes(self.drift_model.artifact, row)
+        return _artifact_minutes(self.drift_model.artifact, log_pred, MIN_DRIFT_MINUTES, MAX_DRIFT_MINUTES)
 
 
-def _prepare_active_training_rows(
-    df: pd.DataFrame,
-    max_rows: int,
-    random_seed: int,
-) -> pd.DataFrame:
-    durations = (df.groupby("episode_id")["timestep_idx"].max() + 1) * 5
-    grouped = (
-        df.sort_values(["episode_id", "timestep_idx"])
-        .groupby("episode_id", sort=False)
-        .first()
-        .reset_index()
-    )
-    grouped = grouped[grouped["change_type"] == "heat_increase"].copy()
-    grouped["duration_min"] = grouped["episode_id"].map(durations)
-    grouped = grouped[grouped["duration_min"].between(5, 240)]
-    grouped["system_running"] = (
-        grouped["HeatingEquipmentStage1_RunTime"].fillna(0).gt(0)
-        | grouped["CoolingEquipmentStage1_RunTime"].fillna(0).gt(0)
-    ).astype(float)
-    grouped["timestamp"] = pd.to_datetime(grouped["timestamp"])
-    grouped = grouped.dropna(
-        subset=["Indoor_AverageTemperature", "target_setpoint", "Outdoor_Temperature", "timestamp"]
-    )
-    if len(grouped) > max_rows:
-        grouped = grouped.sample(n=max_rows, random_state=random_seed)
-    grouped["features"] = grouped.apply(
-        lambda row: _active_feature_vector(
-            current_temp=float(row["Indoor_AverageTemperature"]),
-            target_temp=float(row["target_setpoint"]),
-            outdoor_temp=float(row["Outdoor_Temperature"]),
-            timestamp=pd.Timestamp(row["timestamp"]),
-            system_running=bool(row["system_running"]),
-        ),
-        axis=1,
-    )
-    return grouped[["features", "duration_min"]]
+def _predict_log_minutes(artifact: dict, row: dict[str, float]) -> float:
+    feature_cols = artifact["feature_cols"]
+    x = pd.DataFrame([row], columns=feature_cols).fillna(0).values
+    return float(artifact["model"].predict(x)[0])
 
 
-def _prepare_drift_training_rows(
-    df: pd.DataFrame,
-    max_rows: int,
-    random_seed: int,
-) -> pd.DataFrame:
-    grouped = (
-        df[df["timestep_idx"] == 0]
-        .copy()
-    )
-    grouped = grouped[
-        (grouped["drift_direction"] == "warming_drift")
-        & (grouped["crossed_boundary"] == True)
-        & grouped["time_to_boundary_min"].between(5, 480)
-    ].copy()
-    grouped["timestamp"] = pd.to_datetime(grouped["timestamp"])
-    grouped = grouped.dropna(
-        subset=["start_temp", "boundary_temp", "Outdoor_Temperature", "timestamp", "time_to_boundary_min"]
-    )
-    if len(grouped) > max_rows:
-        grouped = grouped.sample(n=max_rows, random_state=random_seed)
-    grouped["features"] = grouped.apply(
-        lambda row: _drift_feature_vector(
-            current_temp=float(row["start_temp"]),
-            boundary_temp=float(row["boundary_temp"]),
-            outdoor_temp=float(row["Outdoor_Temperature"]),
-            timestamp=pd.Timestamp(row["timestamp"]),
-        ),
-        axis=1,
-    )
-    grouped = grouped.rename(columns={"time_to_boundary_min": "duration_min"})
-    return grouped[["features", "duration_min"]]
+def _artifact_minutes(artifact: dict, log_minutes: float, default_min: float, default_max: float) -> float:
+    min_minutes = float(artifact.get("min_duration", default_min))
+    max_minutes = float(artifact.get("max_duration", default_max))
+    return _clip_minutes(float(np.exp(log_minutes)), min_minutes, max_minutes)
 
 
-def _active_feature_vector(
+def _active_gap(current_temp: float, target_temp: float, direction: Direction) -> float:
+    if direction == "heating":
+        return max(target_temp - current_temp, 0.0)
+    return max(current_temp - target_temp, 0.0)
+
+
+def _drift_margin(current_temp: float, boundary_temp: float, direction: Direction) -> float:
+    if direction == "heating":
+        return max(current_temp - boundary_temp, 0.0)
+    return max(boundary_temp - current_temp, 0.0)
+
+
+def _active_feature_row(
     current_temp: float,
     target_temp: float,
     outdoor_temp: float,
     timestamp: pd.Timestamp,
     system_running: bool,
-) -> np.ndarray:
+    direction: Direction,
+) -> dict[str, float]:
     hour_sin, hour_cos = _hour_features(timestamp)
     month_sin, month_cos = _month_features(timestamp)
-    gap = max(target_temp - current_temp, 0.0)
+    gap = _active_gap(current_temp, target_temp, direction)
     thermal_drive = outdoor_temp - current_temp
-    return np.array(
-        [
-            current_temp,
-            target_temp,
-            outdoor_temp,
-            gap,
-            np.log(gap + 0.1),
-            thermal_drive,
-            hour_sin,
-            hour_cos,
-            month_sin,
-            month_cos,
-            1.0 if system_running else 0.0,
-        ],
-        dtype=float,
-    )
+    signed_thermal_drive = thermal_drive if direction == "heating" else -thermal_drive
+    return {
+        "log_gap": float(np.log(gap + 0.1)),
+        "abs_gap": float(gap),
+        "is_heating": 1.0 if direction == "heating" else 0.0,
+        "system_running": 1.0 if system_running else 0.0,
+        "signed_thermal_drive": float(signed_thermal_drive),
+        "outdoor_temp": float(outdoor_temp),
+        "start_temp": float(current_temp),
+        "hour_sin": hour_sin,
+        "hour_cos": hour_cos,
+        "month_sin": month_sin,
+        "month_cos": month_cos,
+        "hour": float(timestamp.hour),
+        "month": float(timestamp.month),
+        "day_of_week": float(timestamp.weekday()),
+        "indoor_humidity": 50.0,
+        "outdoor_humidity": 50.0,
+    }
 
 
-def _drift_feature_vector(
+def _drift_feature_row(
     current_temp: float,
     boundary_temp: float,
     outdoor_temp: float,
     timestamp: pd.Timestamp,
-) -> np.ndarray:
+    direction: Direction,
+) -> dict[str, float]:
     hour_sin, hour_cos = _hour_features(timestamp)
     month_sin, month_cos = _month_features(timestamp)
-    margin = max(current_temp - boundary_temp, 0.0)
-    thermal_delta = current_temp - outdoor_temp
-    return np.array(
-        [
-            current_temp,
-            boundary_temp,
-            outdoor_temp,
-            margin,
-            np.log(margin + 0.1),
-            thermal_delta,
-            np.log(abs(thermal_delta) + 0.1),
-            hour_sin,
-            hour_cos,
-            month_sin,
-            month_cos,
-        ],
-        dtype=float,
-    )
+    margin = _drift_margin(current_temp, boundary_temp, direction)
+    thermal_drive = outdoor_temp - current_temp
+    signed_thermal_drive = -thermal_drive if direction == "heating" else thermal_drive
+    return {
+        "margin": float(margin),
+        "log_margin": float(np.log(margin + 0.1)),
+        "is_heating": 1.0 if direction == "heating" else 0.0,
+        "signed_thermal_drive": float(signed_thermal_drive),
+        "outdoor_temp": float(outdoor_temp),
+        "start_temp": float(current_temp),
+        "boundary_temp": float(boundary_temp),
+        "hour_sin": hour_sin,
+        "hour_cos": hour_cos,
+        "month_sin": month_sin,
+        "month_cos": month_cos,
+        "hour": float(timestamp.hour),
+        "month": float(timestamp.month),
+        "day_of_week": float(timestamp.weekday()),
+    }
