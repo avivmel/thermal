@@ -9,7 +9,7 @@ import pandas as pd
 from mpc.dp_solver import DpSolution, solve_finite_horizon_dp
 from mpc.model_interfaces import FirstPassagePredictor
 from mpc.problem import MPCConfig, MPCInputs, build_daily_schedule
-from mpc.transitions import TransitionBundle, build_transition_bundle
+from mpc.transitions import TransitionBundle, build_transition_bundle, slice_transition_bundle
 
 
 ForecastProvider = Callable[[dict, int, int], tuple[list[pd.Timestamp], np.ndarray]]
@@ -22,6 +22,14 @@ class MPCDecision:
     solution: DpSolution
     transitions: TransitionBundle
     inputs: MPCInputs
+
+
+@dataclass
+class _TransitionCacheEntry:
+    timestamps_ns: np.ndarray
+    outdoor_temps_f: np.ndarray
+    lower_comfort_f: np.ndarray
+    bundle: TransitionBundle
 
 
 class MPCController:
@@ -41,6 +49,7 @@ class MPCController:
         self.horizon_steps = horizon_steps or (24 * 60 // self.config.timestep_minutes)
         self.hvac_power_kw = hvac_power_kw
         self.last_decision: MPCDecision | None = None
+        self._transition_cache: _TransitionCacheEntry | None = None
 
     def plan(self, obs: dict) -> MPCDecision:
         timestamps, outdoor_forecast = self.forecast_provider(
@@ -58,7 +67,7 @@ class MPCController:
             initial_running=obs.get("hvac_mode") == "heating",
             initial_timestamp=pd.Timestamp(obs["timestamp"]),
         )
-        transitions = build_transition_bundle(self.config, inputs, self.predictor)
+        transitions = self._get_transition_bundle(inputs)
         solution = solve_finite_horizon_dp(self.config, inputs, transitions)
         action = {
             "heat_setpoint": solution.first_action_temp_f,
@@ -70,6 +79,38 @@ class MPCController:
 
     def __call__(self, obs: dict) -> dict:
         return self.plan(obs).action
+
+    def _get_transition_bundle(self, inputs: MPCInputs) -> TransitionBundle:
+        timestamps_ns = np.array([ts.value for ts in map(pd.Timestamp, inputs.timestamps)], dtype=np.int64)
+        outdoor = np.asarray(inputs.outdoor_temps_f, dtype=float)
+        lower_comfort = np.asarray(inputs.lower_comfort_f, dtype=float)
+
+        cached = self._transition_cache
+        if cached is not None:
+            offset = len(cached.timestamps_ns) - len(timestamps_ns)
+            if offset >= 0:
+                if (
+                    np.array_equal(cached.timestamps_ns[offset:], timestamps_ns)
+                    and np.array_equal(cached.outdoor_temps_f[offset:], outdoor)
+                    and np.array_equal(cached.lower_comfort_f[offset:], lower_comfort)
+                ):
+                    bundle = slice_transition_bundle(cached.bundle, offset)
+                    self._transition_cache = _TransitionCacheEntry(
+                        timestamps_ns=timestamps_ns,
+                        outdoor_temps_f=outdoor,
+                        lower_comfort_f=lower_comfort,
+                        bundle=bundle,
+                    )
+                    return bundle
+
+        bundle = build_transition_bundle(self.config, inputs, self.predictor)
+        self._transition_cache = _TransitionCacheEntry(
+            timestamps_ns=timestamps_ns,
+            outdoor_temps_f=outdoor,
+            lower_comfort_f=lower_comfort,
+            bundle=bundle,
+        )
+        return bundle
 
 
 def persistence_forecast(
@@ -108,6 +149,7 @@ def make_daily_heating_mpc(
     peak_end_hour: int = 20,
     default_heat_f: float = 68.0,
     peak_heat_f: float = 66.0,
+    outdoor_quantization_f: float = 2.0,
 ) -> MPCController:
     config = config or MPCConfig()
     def forecast_provider(
@@ -123,7 +165,10 @@ def make_daily_heating_mpc(
             start_timestamp + pd.Timedelta(minutes=config.timestep_minutes * step)
             for step in range(horizon_steps)
         ]
-        return timestamps, np.full(horizon_steps, float(obs["outdoor_temp"]), dtype=float)
+        outdoor_temp = float(obs["outdoor_temp"])
+        if outdoor_quantization_f > 0:
+            outdoor_temp = round(outdoor_temp / outdoor_quantization_f) * outdoor_quantization_f
+        return timestamps, np.full(horizon_steps, outdoor_temp, dtype=float)
 
     def schedule_provider(timestamps: list[pd.Timestamp]) -> np.ndarray:
         if not timestamps:

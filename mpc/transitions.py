@@ -19,6 +19,18 @@ class TransitionBundle:
     action_grid: np.ndarray
 
 
+def slice_transition_bundle(bundle: TransitionBundle, start_index: int) -> TransitionBundle:
+    return TransitionBundle(
+        next_temp_idx=bundle.next_temp_idx[start_index:].copy(),
+        next_running_flag=bundle.next_running_flag[start_index:].copy(),
+        energy_kwh=bundle.energy_kwh[start_index:].copy(),
+        comfort_violation_f=bundle.comfort_violation_f[start_index:].copy(),
+        feasible=bundle.feasible[start_index:].copy(),
+        runtime_minutes=bundle.runtime_minutes[start_index:].copy(),
+        action_grid=bundle.action_grid,
+    )
+
+
 def build_transition_bundle(
     config: MPCConfig,
     inputs: MPCInputs,
