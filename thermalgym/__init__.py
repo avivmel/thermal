@@ -19,6 +19,7 @@ from thermalgym.buildings import BUILDINGS, get_building, get_buildings, Buildin
 from thermalgym.generate import generate_episodes, evaluate
 from thermalgym.policies import Baseline, PreCool, PreHeat, Setback, PriceResponse
 from mpc import MPCController
+from rule_mpc import RulePreheatMPCController
 
 __version__ = "0.1.0"
 __all__ = [
@@ -33,5 +34,5 @@ __all__ = [
     # Policies
     "Baseline", "PreCool", "PreHeat", "Setback", "PriceResponse",
     # MPC
-    "MPCController",
+    "MPCController", "RulePreheatMPCController",
 ]

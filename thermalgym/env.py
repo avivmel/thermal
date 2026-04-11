@@ -403,6 +403,7 @@ class ThermalEnv:
             hvac_mode = "off"
 
         ep_hour = api.exchange.hour(state)
+        ep_minute = self._read_energyplus_minute(state, int(ep_hour))
         ep_day_of_year = api.exchange.day_of_year(state)
         ep_year = api.exchange.year(state)
         ep_month = api.exchange.month(state)
@@ -416,7 +417,7 @@ class ThermalEnv:
             return c * 9.0 / 5.0 + 32.0
 
         return {
-            "timestamp": ts + pd.Timedelta(hours=ep_hour),
+            "timestamp": ts + pd.Timedelta(hours=ep_hour, minutes=ep_minute),
             "indoor_temp": c_to_f(indoor_temp),
             "outdoor_temp": c_to_f(outdoor_temp),
             "hvac_power_kw": float(hvac_power_w) / 1000.0,
@@ -428,6 +429,19 @@ class ThermalEnv:
             "day_of_week": int(day_of_week),
             "month": int(ep_month),
         }
+
+    def _read_energyplus_minute(self, state, ep_hour: int) -> int:
+        """Return minute within the current hour, falling back to the local step counter."""
+        exchange = self._api.exchange
+        if hasattr(exchange, "minutes"):
+            return int(exchange.minutes(state))
+        if hasattr(exchange, "minute"):
+            return int(exchange.minute(state))
+        current_time = getattr(exchange, "current_time", None)
+        if current_time is not None:
+            hour_fraction = float(current_time(state))
+            return int(round((hour_fraction - ep_hour) * 60.0))
+        return int((self._step_count * self._timestep_minutes) % 60)
 
     def _write_setpoints(self, state, action: dict) -> None:
         """Write clamped setpoints via actuators. EnergyPlus expects °C."""
