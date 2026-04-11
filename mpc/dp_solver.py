@@ -49,8 +49,9 @@ def solve_finite_horizon_dp(
                     next_running = transitions.next_running_flag[t, temp_idx, running_flag, action_idx]
                     energy = transitions.energy_kwh[t, temp_idx, running_flag, action_idx]
                     comfort_violation = transitions.comfort_violation_f[t, temp_idx, running_flag, action_idx]
+                    energy_weight = inputs.energy_weight_at(t)
                     stage_cost = (
-                        config.lambda_energy * (energy ** 2)
+                        config.lambda_energy * energy_weight * (energy ** 2)
                         + config.lambda_comfort * (comfort_violation ** 2)
                     )
                     total_cost = stage_cost + values[t + 1, next_temp_idx, next_running]

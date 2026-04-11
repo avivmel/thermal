@@ -22,6 +22,8 @@ class MPCConfig:
     terminal_penalty: float = 1_000.0
     comfort_slack_f: float = 0.0
     target_reached_epsilon_f: float = 0.25
+    boundary_maintenance_runtime_fraction_per_delta_f: float = 0.01
+    boundary_maintenance_runtime_fraction_max: float = 0.75
 
     @property
     def temperature_grid(self) -> np.ndarray:
@@ -43,6 +45,7 @@ class MPCInputs:
     initial_indoor_temp_f: float
     initial_running: bool
     initial_timestamp: pd.Timestamp | None = None
+    energy_weights: Sequence[float] | None = None
 
     def __post_init__(self) -> None:
         n = len(self.timestamps)
@@ -52,6 +55,8 @@ class MPCInputs:
             raise ValueError("outdoor_temps_f must match timestamps length")
         if len(self.lower_comfort_f) != n:
             raise ValueError("lower_comfort_f must match timestamps length")
+        if self.energy_weights is not None and len(self.energy_weights) != n:
+            raise ValueError("energy_weights must match timestamps length")
 
     @property
     def horizon_steps(self) -> int:
@@ -65,6 +70,11 @@ class MPCInputs:
 
     def lower_comfort_at(self, index: int) -> float:
         return float(self.lower_comfort_f[index])
+
+    def energy_weight_at(self, index: int) -> float:
+        if self.energy_weights is None:
+            return 1.0
+        return float(self.energy_weights[index])
 
 
 def snap_to_grid(value: float, grid: np.ndarray) -> int:

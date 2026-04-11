@@ -69,16 +69,27 @@ def build_transition_bundle(
                         continue
 
                     if action_temp <= current_temp + config.target_reached_epsilon_f:
-                        tau = predictor.predict_drift_time(
-                            current_temp=current_temp,
-                            boundary_temp=lower_comfort,
-                            outdoor_temp=outdoor,
-                            timestamp=ts,
-                        )
-                        progress = min(dt / max(tau, 1e-6), 1.0)
-                        next_temp = current_temp + progress * (lower_comfort - current_temp)
-                        runtime = 0.0
-                        next_running = 1 if next_temp <= lower_comfort + config.target_reached_epsilon_f else 0
+                        if current_temp <= lower_comfort + config.target_reached_epsilon_f:
+                            next_temp = max(current_temp, lower_comfort)
+                            runtime_fraction = np.clip(
+                                (lower_comfort - outdoor)
+                                * config.boundary_maintenance_runtime_fraction_per_delta_f,
+                                0.0,
+                                config.boundary_maintenance_runtime_fraction_max,
+                            )
+                            runtime = dt * runtime_fraction
+                            next_running = 1 if runtime > 0 else 0
+                        else:
+                            tau = predictor.predict_drift_time(
+                                current_temp=current_temp,
+                                boundary_temp=lower_comfort,
+                                outdoor_temp=outdoor,
+                                timestamp=ts,
+                            )
+                            progress = min(dt / max(tau, 1e-6), 1.0)
+                            next_temp = current_temp + progress * (lower_comfort - current_temp)
+                            runtime = 0.0
+                            next_running = 1 if next_temp <= lower_comfort + config.target_reached_epsilon_f else 0
                     else:
                         tau = predictor.predict_heat_time(
                             current_temp=current_temp,

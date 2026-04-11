@@ -81,6 +81,7 @@ def run_scenario(
     timestamps: list[pd.Timestamp],
     outdoor_profile_f: np.ndarray,
     lower_comfort_f: np.ndarray,
+    energy_weights: np.ndarray,
     predictor: FirstPassagePredictor,
     config: MPCConfig,
     hvac_power_kw: float = 8.0,
@@ -91,11 +92,15 @@ def run_scenario(
     def schedule_provider(_: list[pd.Timestamp]) -> np.ndarray:
         return lower_comfort_f
 
+    def energy_weight_provider(_: list[pd.Timestamp]) -> np.ndarray:
+        return energy_weights
+
     controller = MPCController(
         predictor=predictor,
         config=config,
         forecast_provider=forecast_provider,
         comfort_schedule_provider=schedule_provider,
+        energy_weight_provider=energy_weight_provider,
         horizon_steps=len(timestamps),
         hvac_power_kw=hvac_power_kw,
     )
@@ -139,6 +144,7 @@ def main() -> None:
         timestep_minutes=config.timestep_minutes,
     )
     lower_comfort = np.array([68.0] * 24, dtype=float)
+    energy_weights = np.ones(24, dtype=float)
     scenarios.append(
         run_scenario(
             name="already_warm_home",
@@ -148,6 +154,7 @@ def main() -> None:
             timestamps=timestamps,
             outdoor_profile_f=outdoor,
             lower_comfort_f=lower_comfort,
+            energy_weights=energy_weights,
             predictor=predictor,
             config=config,
         )
@@ -159,6 +166,7 @@ def main() -> None:
         timestep_minutes=config.timestep_minutes,
     )
     lower_comfort = np.array([66.0] * 12 + [68.0] * 12, dtype=float)
+    energy_weights = np.array([1.0] * 12 + [8.0] * 12, dtype=float)
     scenarios.append(
         run_scenario(
             name="future_comfort_increase",
@@ -168,6 +176,7 @@ def main() -> None:
             timestamps=timestamps,
             outdoor_profile_f=outdoor,
             lower_comfort_f=lower_comfort,
+            energy_weights=energy_weights,
             predictor=predictor,
             config=config,
         )
@@ -179,6 +188,7 @@ def main() -> None:
         timestep_minutes=config.timestep_minutes,
     )
     lower_comfort = np.array([68.0] * 18, dtype=float)
+    energy_weights = np.ones(18, dtype=float)
     scenarios.append(
         run_scenario(
             name="cold_start_near_deadline",
@@ -188,6 +198,7 @@ def main() -> None:
             timestamps=timestamps,
             outdoor_profile_f=outdoor,
             lower_comfort_f=lower_comfort,
+            energy_weights=energy_weights,
             predictor=predictor,
             config=config,
         )
@@ -204,6 +215,7 @@ def main() -> None:
         timestep_minutes=config.timestep_minutes,
     )
     lower_comfort = np.array([68.0] * 24, dtype=float)
+    energy_weights = np.ones(24, dtype=float)
     scenarios.append(
         run_scenario(
             name="mild_day_should_coast",
@@ -213,6 +225,7 @@ def main() -> None:
             timestamps=timestamps,
             outdoor_profile_f=outdoor,
             lower_comfort_f=lower_comfort,
+            energy_weights=energy_weights,
             predictor=mild_predictor,
             config=config,
         )

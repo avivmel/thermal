@@ -14,6 +14,7 @@ from mpc.transitions import TransitionBundle, build_transition_bundle, slice_tra
 
 ForecastProvider = Callable[[dict, int, int], tuple[list[pd.Timestamp], np.ndarray]]
 ScheduleProvider = Callable[[list[pd.Timestamp]], np.ndarray]
+EnergyWeightProvider = Callable[[list[pd.Timestamp]], np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class MPCController:
         config: MPCConfig | None = None,
         forecast_provider: ForecastProvider | None = None,
         comfort_schedule_provider: ScheduleProvider | None = None,
+        energy_weight_provider: EnergyWeightProvider | None = None,
         horizon_steps: int | None = None,
         hvac_power_kw: float = 8.0,
     ) -> None:
@@ -46,6 +48,7 @@ class MPCController:
         self.config = config or MPCConfig()
         self.forecast_provider = forecast_provider or persistence_forecast
         self.comfort_schedule_provider = comfort_schedule_provider or default_comfort_schedule
+        self.energy_weight_provider = energy_weight_provider or default_energy_weights
         self.horizon_steps = horizon_steps or (24 * 60 // self.config.timestep_minutes)
         self.hvac_power_kw = hvac_power_kw
         self.last_decision: MPCDecision | None = None
@@ -58,6 +61,7 @@ class MPCController:
             self.config.timestep_minutes,
         )
         lower_comfort = np.asarray(self.comfort_schedule_provider(timestamps), dtype=float)
+        energy_weights = np.asarray(self.energy_weight_provider(timestamps), dtype=float)
         inputs = MPCInputs(
             timestamps=timestamps,
             outdoor_temps_f=outdoor_forecast,
@@ -66,6 +70,7 @@ class MPCController:
             initial_indoor_temp_f=float(obs["indoor_temp"]),
             initial_running=obs.get("hvac_mode") == "heating",
             initial_timestamp=pd.Timestamp(obs["timestamp"]),
+            energy_weights=energy_weights,
         )
         transitions = self._get_transition_bundle(inputs)
         solution = solve_finite_horizon_dp(self.config, inputs, transitions)
@@ -141,6 +146,10 @@ def default_comfort_schedule(timestamps: list[pd.Timestamp]) -> np.ndarray:
     )
 
 
+def default_energy_weights(timestamps: list[pd.Timestamp]) -> np.ndarray:
+    return np.ones(len(timestamps), dtype=float)
+
+
 def make_daily_heating_mpc(
     predictor: FirstPassagePredictor,
     hvac_power_kw: float,
@@ -150,6 +159,8 @@ def make_daily_heating_mpc(
     default_heat_f: float = 68.0,
     peak_heat_f: float = 66.0,
     outdoor_quantization_f: float = 2.0,
+    peak_energy_weight: float = 8.0,
+    offpeak_energy_weight: float = 1.0,
 ) -> MPCController:
     config = config or MPCConfig()
     def forecast_provider(
@@ -184,11 +195,21 @@ def make_daily_heating_mpc(
         )
         return lower_comfort
 
+    def energy_weight_provider(timestamps: list[pd.Timestamp]) -> np.ndarray:
+        return np.array(
+            [
+                peak_energy_weight if peak_start_hour <= ts.hour < peak_end_hour else offpeak_energy_weight
+                for ts in timestamps
+            ],
+            dtype=float,
+        )
+
     return MPCController(
         predictor=predictor,
         config=config,
         forecast_provider=forecast_provider,
         comfort_schedule_provider=schedule_provider,
+        energy_weight_provider=energy_weight_provider,
         horizon_steps=24 * 60 // config.timestep_minutes,
         hvac_power_kw=hvac_power_kw,
     )
