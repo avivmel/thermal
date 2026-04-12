@@ -22,7 +22,9 @@ _CA_TOU_PRICES = np.array([
 ])
 
 _HISTORY_COLUMNS = [
-    "timestamp", "indoor_temp", "outdoor_temp", "hvac_power_kw", "hvac_mode",
+    "timestamp", "indoor_temp", "outdoor_temp", "hvac_power_kw", "facility_hvac_power_kw",
+    "heating_power_kw", "cooling_power_kw", "fan_power_kw",
+    "water_heater_power_kw", "hvac_mode",
     "heat_setpoint", "cool_setpoint", "electricity_price", "hour", "day_of_week", "month",
 ]
 
@@ -100,6 +102,7 @@ class ThermalEnv:
         self._current_obs: Optional[dict] = None
         self._pending_action: Optional[dict] = None
         self._start_date: Optional[str] = None
+        self._start_timestamp: Optional[pd.Timestamp] = None
 
         # Threading synchronization
         self._ep_ready = threading.Event()
@@ -112,9 +115,11 @@ class ThermalEnv:
         self._handles_initialized: bool = False
         self._indoor_temp_handle: Optional[int] = None
         self._outdoor_temp_handle: Optional[int] = None
-        self._hvac_power_handle: Optional[int] = None
-        self._heating_rate_handle: Optional[int] = None
-        self._cooling_rate_handle: Optional[int] = None
+        self._facility_hvac_power_handle: Optional[int] = None
+        self._water_heater_power_handle: Optional[int] = None
+        self._heating_energy_handles: list[int] = []
+        self._cooling_energy_handles: list[int] = []
+        self._fan_energy_handles: list[int] = []
         self._heat_sp_handle: Optional[int] = None
         self._cool_sp_handle: Optional[int] = None
         self._ep_state = None
@@ -155,6 +160,7 @@ class ThermalEnv:
         self._current_obs = None
         self._pending_action = {"heat_setpoint": 68.0, "cool_setpoint": 76.0}
         self._start_date = date
+        self._start_timestamp = pd.Timestamp(date).normalize()
         self._ep_exception = None
         self._handles_initialized = False
         self._ep_ready.clear()
@@ -195,18 +201,17 @@ class ThermalEnv:
         if self._ep_exception is not None:
             raise self._ep_exception
 
-        # Clamp and store action
+        # Record the current observation before applying the next action.
+        # The action passed to step() affects the following EnergyPlus timestep.
+        row = dict(self._current_obs)
+        self._history_rows.append(row)
+
+        # Clamp and store action for the next timestep.
         heat = float(np.clip(action.get("heat_setpoint", 68.0), HEAT_MIN, HEAT_MAX))
         cool = float(np.clip(action.get("cool_setpoint", 76.0), COOL_MIN, COOL_MAX))
         self._pending_action = {"heat_setpoint": heat, "cool_setpoint": cool}
         self._current_heat_sp = heat
         self._current_cool_sp = cool
-
-        # Record current obs to history before advancing
-        row = dict(self._current_obs)
-        row["heat_setpoint"] = heat
-        row["cool_setpoint"] = cool
-        self._history_rows.append(row)
 
         # Signal EnergyPlus to proceed
         self._py_ready.set()
@@ -251,6 +256,11 @@ class ThermalEnv:
                 "indoor_temp": "float64",
                 "outdoor_temp": "float64",
                 "hvac_power_kw": "float64",
+                "facility_hvac_power_kw": "float64",
+                "heating_power_kw": "float64",
+                "cooling_power_kw": "float64",
+                "fan_power_kw": "float64",
+                "water_heater_power_kw": "float64",
                 "hvac_mode": "object",
                 "heat_setpoint": "float64",
                 "cool_setpoint": "float64",
@@ -300,8 +310,10 @@ class ThermalEnv:
         api.exchange.request_variable(state, "Zone Mean Air Temperature", zone)
         api.exchange.request_variable(state, "Site Outdoor Air Drybulb Temperature", "Environment")
         api.exchange.request_variable(state, "Facility Total HVAC Electricity Demand Rate", "Whole Building")
-        api.exchange.request_variable(state, "Facility Total Heating Electricity Rate", "Whole Building")
-        api.exchange.request_variable(state, "Facility Total Cooling Electricity Rate", "Whole Building")
+        api.exchange.request_variable(state, "Water Heater Electricity Rate", "Water Heater")
+        api.exchange.request_variable(state, "Heating Coil Electricity Energy", "*")
+        api.exchange.request_variable(state, "Cooling Coil Electricity Energy", "*")
+        api.exchange.request_variable(state, "Fan Electricity Energy", "*")
 
         def _ep_callback(state_handle) -> None:
             try:
@@ -322,15 +334,15 @@ class ThermalEnv:
                 obs = self._read_obs(state_handle)
                 self._current_obs = obs
 
-                # Write setpoints from previous action (actuators persist across timesteps)
-                self._write_setpoints(state_handle, self._pending_action)
-
                 # Signal Python that obs is ready
                 self._ep_ready.set()
 
                 # Wait for Python to provide next action
                 self._py_ready.wait()
                 self._py_ready.clear()
+
+                # Write the next action before EnergyPlus advances to the following timestep.
+                self._write_setpoints(state_handle, self._pending_action)
 
                 if self._stop_flag.is_set():
                     api.runtime.stop_simulation(state_handle)
@@ -369,15 +381,19 @@ class ThermalEnv:
         self._outdoor_temp_handle = api.exchange.get_variable_handle(
             state, "Site Outdoor Air Drybulb Temperature", "Environment"
         )
-        self._hvac_power_handle = api.exchange.get_variable_handle(
+        self._facility_hvac_power_handle = api.exchange.get_variable_handle(
             state, "Facility Total HVAC Electricity Demand Rate", "Whole Building"
         )
-        self._heating_rate_handle = api.exchange.get_variable_handle(
-            state, "Facility Total Heating Electricity Rate", "Whole Building"
+        self._water_heater_power_handle = api.exchange.get_variable_handle(
+            state, "Water Heater Electricity Rate", "Water Heater"
         )
-        self._cooling_rate_handle = api.exchange.get_variable_handle(
-            state, "Facility Total Cooling Electricity Rate", "Whole Building"
+        self._heating_energy_handles = self._variable_handles_by_name(
+            state, "Heating Coil Electricity Energy"
         )
+        self._cooling_energy_handles = self._variable_handles_by_name(
+            state, "Cooling Coil Electricity Energy"
+        )
+        self._fan_energy_handles = self._variable_handles_by_name(state, "Fan Electricity Energy")
         self._heat_sp_handle = api.exchange.get_actuator_handle(
             state, "Zone Temperature Control", "Heating Setpoint", zone_name
         )
@@ -385,41 +401,76 @@ class ThermalEnv:
             state, "Zone Temperature Control", "Cooling Setpoint", zone_name
         )
 
+        handles = {
+            "indoor temperature": self._indoor_temp_handle,
+            "outdoor temperature": self._outdoor_temp_handle,
+            "facility HVAC power": self._facility_hvac_power_handle,
+            "water heater power": self._water_heater_power_handle,
+            "heating setpoint actuator": self._heat_sp_handle,
+            "cooling setpoint actuator": self._cool_sp_handle,
+        }
+        missing = [name for name, handle in handles.items() if handle is None or handle < 0]
+        if missing:
+            raise RuntimeError(f"EnergyPlus handle lookup failed for: {', '.join(missing)}")
+
+    def _variable_handles_by_name(self, state, variable_name: str) -> list[int]:
+        """Return all valid output-variable handles matching a variable name."""
+        api = self._api
+        handles: list[int] = []
+        for point in api.exchange.get_api_data(state):
+            if point.what != "OutputVariable" or point.name != variable_name:
+                continue
+            handle = api.exchange.get_variable_handle(state, point.name, point.key)
+            if handle >= 0:
+                handles.append(handle)
+        return handles
+
     def _read_obs(self, state) -> dict:
         """Read all sensor values and return obs dict."""
         api = self._api
 
         indoor_temp = api.exchange.get_variable_value(state, self._indoor_temp_handle)
         outdoor_temp = api.exchange.get_variable_value(state, self._outdoor_temp_handle)
-        hvac_power_w = api.exchange.get_variable_value(state, self._hvac_power_handle)
-        heating_rate = api.exchange.get_variable_value(state, self._heating_rate_handle)
-        cooling_rate = api.exchange.get_variable_value(state, self._cooling_rate_handle)
+        facility_hvac_power_w = api.exchange.get_variable_value(
+            state, self._facility_hvac_power_handle
+        )
+        water_heater_power_w = api.exchange.get_variable_value(
+            state, self._water_heater_power_handle
+        )
+        timestep_seconds = max(float(api.exchange.zone_time_step(state)) * 3600.0, 1.0)
+        heating_power_w = self._energy_handles_to_power_w(state, self._heating_energy_handles, timestep_seconds)
+        cooling_power_w = self._energy_handles_to_power_w(state, self._cooling_energy_handles, timestep_seconds)
+        fan_power_w = self._energy_handles_to_power_w(state, self._fan_energy_handles, timestep_seconds)
+        hvac_power_w = heating_power_w + cooling_power_w + fan_power_w
 
-        if heating_rate > 0:
+        if heating_power_w > 0:
             hvac_mode = "heating"
-        elif cooling_rate > 0:
+        elif cooling_power_w > 0:
             hvac_mode = "cooling"
         else:
             hvac_mode = "off"
 
         ep_hour = api.exchange.hour(state)
-        ep_day_of_year = api.exchange.day_of_year(state)
-        ep_year = api.exchange.year(state)
         ep_month = api.exchange.month(state)
         ep_day = api.exchange.day_of_month(state)
+        ep_minute = api.exchange.minutes(state)
 
-        # Compute day_of_week from date
-        ts = pd.Timestamp(year=ep_year, month=ep_month, day=ep_day)
+        ts = self._timestamp_from_energyplus_date(ep_month, ep_day)
         day_of_week = ts.dayofweek  # 0=Monday
 
         def c_to_f(c: float) -> float:
             return c * 9.0 / 5.0 + 32.0
 
         return {
-            "timestamp": ts + pd.Timedelta(hours=ep_hour),
+            "timestamp": ts + pd.Timedelta(hours=ep_hour, minutes=ep_minute),
             "indoor_temp": c_to_f(indoor_temp),
             "outdoor_temp": c_to_f(outdoor_temp),
             "hvac_power_kw": float(hvac_power_w) / 1000.0,
+            "facility_hvac_power_kw": float(facility_hvac_power_w) / 1000.0,
+            "heating_power_kw": float(heating_power_w) / 1000.0,
+            "cooling_power_kw": float(cooling_power_w) / 1000.0,
+            "fan_power_kw": float(fan_power_w) / 1000.0,
+            "water_heater_power_kw": float(water_heater_power_w) / 1000.0,
             "hvac_mode": hvac_mode,
             "heat_setpoint": self._current_heat_sp,
             "cool_setpoint": self._current_cool_sp,
@@ -428,6 +479,26 @@ class ThermalEnv:
             "day_of_week": int(day_of_week),
             "month": int(ep_month),
         }
+
+    def _energy_handles_to_power_w(
+        self,
+        state,
+        handles: list[int],
+        timestep_seconds: float,
+    ) -> float:
+        api = self._api
+        energy_j = sum(api.exchange.get_variable_value(state, handle) for handle in handles)
+        return float(energy_j) / timestep_seconds
+
+    def _timestamp_from_energyplus_date(self, month: int, day: int) -> pd.Timestamp:
+        """Map EnergyPlus weather-file month/day onto the requested episode year."""
+        if self._start_timestamp is None:
+            return pd.Timestamp(year=1990, month=month, day=day)
+
+        ts = pd.Timestamp(year=self._start_timestamp.year, month=month, day=day)
+        if ts < self._start_timestamp:
+            ts += pd.DateOffset(years=1)
+        return ts
 
     def _write_setpoints(self, state, action: dict) -> None:
         """Write clamped setpoints via actuators. EnergyPlus expects °C."""
