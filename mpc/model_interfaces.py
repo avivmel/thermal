@@ -185,6 +185,17 @@ class XGBFirstPassagePredictor(FirstPassagePredictor):
             direction=direction,
         )
         log_pred = _predict_log_minutes(self.drift_model.artifact, row)
+
+        if home_id is not None:
+            mode = 1 if direction == "heating" else 0
+            home_mode_key = (home_id, mode)
+            home_mode_residuals = self.drift_model.artifact.get("home_mode_residuals", {})
+            home_residuals = self.drift_model.artifact.get("home_residuals", {})
+            if home_mode_key in home_mode_residuals:
+                log_pred += float(home_mode_residuals[home_mode_key])
+            elif home_id in home_residuals:
+                log_pred += float(home_residuals[home_id])
+
         return _artifact_minutes(self.drift_model.artifact, log_pred, MIN_DRIFT_MINUTES, MAX_DRIFT_MINUTES)
 
 
