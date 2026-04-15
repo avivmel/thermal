@@ -27,6 +27,13 @@ from thermalgym import Baseline, PreCool, PreHeat, Setback, ThermalEnv, get_buil
 def main() -> None:
     args = parse_args()
     out_dir = Path(args.out_dir)
+    metrics_path = out_dir / "metrics.parquet"
+
+    if args.recompute_relative_only:
+        recompute_relative_metrics_file(metrics_path)
+        print(f"Updated relative metrics: {metrics_path}")
+        return
+
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -35,7 +42,6 @@ def main() -> None:
     raw_path = raw_dir / f"{cell_id}.parquet"
     commands_path = raw_dir / f"{cell_id}_commands.parquet"
     done_path = raw_dir / f"{cell_id}.done"
-    metrics_path = out_dir / "metrics.parquet"
     manifest_path = out_dir / "manifest.json"
 
     if done_path.exists() and not args.overwrite:
@@ -101,16 +107,16 @@ def main() -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one controller evaluation cell in ThermalGym.")
-    parser.add_argument("--building", required=True)
-    parser.add_argument("--start-date", required=True)
-    parser.add_argument("--mode", required=True, choices=["heating", "cooling"])
+    parser.add_argument("--building")
+    parser.add_argument("--start-date")
+    parser.add_argument("--mode", choices=["heating", "cooling"])
     parser.add_argument(
         "--controller",
         choices=["mpc", "baseline", "setback", "precool", "preheat"],
         default="mpc",
     )
-    parser.add_argument("--peak-start", required=True, help="Peak start clock time, e.g. 17:00")
-    parser.add_argument("--peak-end", required=True, help="Peak end clock time, e.g. 20:00")
+    parser.add_argument("--peak-start", help="Peak start clock time, e.g. 17:00")
+    parser.add_argument("--peak-end", help="Peak end clock time, e.g. 20:00")
     parser.add_argument("--run-period-days", type=int, default=1)
     parser.add_argument("--timestep-minutes", type=int, default=15, choices=[5, 15, 60])
     parser.add_argument("--out-dir", default="results/mpc_eval/smoke")
@@ -128,6 +134,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rule-setback", type=float, default=2.0)
     parser.add_argument("--rule-setback-magnitude", type=float, default=4.0)
     parser.add_argument("--rule-precondition-hours", type=float, default=2.0)
+    parser.add_argument(
+        "--recompute-relative-only",
+        action="store_true",
+        help="Update relative metrics in --out-dir/metrics.parquet without running EnergyPlus.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -158,6 +169,12 @@ def apply_mode_defaults(args: argparse.Namespace) -> None:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if getattr(args, "recompute_relative_only", False):
+        return
+    for name in ("building", "start_date", "mode", "peak_start", "peak_end"):
+        if getattr(args, name) is None:
+            option = "--" + name.replace("_", "-")
+            raise SystemExit(f"{option} is required unless --recompute-relative-only is set")
     if args.run_period_days <= 0:
         raise SystemExit("--run-period-days must be positive")
     if args.comfort_lower >= args.comfort_upper:
@@ -482,7 +499,103 @@ def write_metrics(path: Path, metrics: dict[str, Any], overwrite_cell_id: str) -
         if "cell_id" in existing.columns:
             existing = existing[existing["cell_id"] != overwrite_cell_id]
         row = pd.concat([existing, row], ignore_index=True)
+    row = add_relative_metrics(row)
     row.to_parquet(path, index=False)
+
+
+RELATIVE_METRIC_COLUMNS = [
+    "peak_runtime_reduction_pct",
+    "peak_energy_reduction_pct",
+    "energy_overhead_pct",
+    "cost_savings_pct",
+    "peak_cost_savings_pct",
+    "comfort_violation_delta_min",
+    "comfort_degree_min_delta",
+]
+
+BASELINE_MATCH_COLUMNS = [
+    "building",
+    "start_date",
+    "run_period_days",
+    "timestep_minutes",
+    "mode",
+    "peak_start",
+    "peak_end",
+    "comfort_lower_f",
+    "comfort_upper_f",
+    "normal_heat_setpoint_f",
+    "normal_cool_setpoint_f",
+    "forecast_kind",
+]
+
+
+def recompute_relative_metrics_file(path: Path) -> None:
+    if not path.exists():
+        raise SystemExit(f"metrics file not found: {path}")
+    metrics = pd.read_parquet(path)
+    add_relative_metrics(metrics).to_parquet(path, index=False)
+
+
+def add_relative_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty:
+        return metrics
+
+    result = metrics.copy()
+    for column in RELATIVE_METRIC_COLUMNS:
+        result[column] = np.nan
+
+    missing_columns = [column for column in BASELINE_MATCH_COLUMNS if column not in result.columns]
+    if missing_columns:
+        return result
+
+    grouped = result.groupby(BASELINE_MATCH_COLUMNS, dropna=False, sort=False)
+    for _, index in grouped.groups.items():
+        group = result.loc[index]
+        baselines = group[group["controller"] == "baseline"]
+        if baselines.empty:
+            continue
+        baseline = baselines.iloc[0]
+        for row_index in group.index:
+            row = result.loc[row_index]
+            result.loc[row_index, "peak_runtime_reduction_pct"] = reduction_pct(
+                baseline["peak_runtime_min"], row["peak_runtime_min"]
+            )
+            result.loc[row_index, "peak_energy_reduction_pct"] = reduction_pct(
+                baseline["peak_energy_kwh"], row["peak_energy_kwh"]
+            )
+            result.loc[row_index, "energy_overhead_pct"] = increase_pct(
+                baseline["total_energy_kwh"], row["total_energy_kwh"]
+            )
+            result.loc[row_index, "cost_savings_pct"] = reduction_pct(
+                baseline["cost_usd"], row["cost_usd"]
+            )
+            result.loc[row_index, "peak_cost_savings_pct"] = reduction_pct(
+                baseline["peak_cost_usd"], row["peak_cost_usd"]
+            )
+            result.loc[row_index, "comfort_violation_delta_min"] = (
+                float(row["comfort_violation_min"]) - float(baseline["comfort_violation_min"])
+            )
+            result.loc[row_index, "comfort_degree_min_delta"] = (
+                float(row["comfort_violation_degree_min"])
+                - float(baseline["comfort_violation_degree_min"])
+            )
+    return result
+
+
+def reduction_pct(baseline: Any, value: Any) -> float:
+    baseline = float(baseline)
+    value = float(value)
+    if baseline == 0.0:
+        return 0.0 if value == 0.0 else np.nan
+    return (baseline - value) / baseline * 100.0
+
+
+def increase_pct(baseline: Any, value: Any) -> float:
+    baseline = float(baseline)
+    value = float(value)
+    if baseline == 0.0:
+        return 0.0 if value == 0.0 else np.nan
+    return (value - baseline) / baseline * 100.0
 
 
 def write_manifest(path: Path, cell_id: str, manifest: dict[str, Any]) -> None:

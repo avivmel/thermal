@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from scripts.run_mpc_evaluation import (
+    add_relative_metrics,
     build_rule_policy,
     cell_id_from_args,
     compute_metrics,
@@ -194,6 +195,10 @@ def test_cell_id_includes_controller_to_keep_comparisons_separate() -> None:
 
 def test_rule_controllers_reject_subhour_peak_windows() -> None:
     class Args:
+        recompute_relative_only = False
+        building = "small_hot_heatpump"
+        start_date = "2017-07-29"
+        mode = "cooling"
         run_period_days = 1
         comfort_lower = 72.0
         comfort_upper = 76.0
@@ -203,3 +208,133 @@ def test_rule_controllers_reject_subhour_peak_windows() -> None:
 
     with pytest.raises(SystemExit, match="whole-hour"):
         validate_args(Args())
+
+
+def test_non_recompute_mode_requires_cell_identity_args() -> None:
+    class Args:
+        recompute_relative_only = False
+        building = None
+        start_date = "2017-07-29"
+        mode = "cooling"
+        run_period_days = 1
+        comfort_lower = 72.0
+        comfort_upper = 76.0
+        controller = "mpc"
+        peak_start = "17:00"
+        peak_end = "20:00"
+
+    with pytest.raises(SystemExit, match="--building"):
+        validate_args(Args())
+
+
+def test_recompute_mode_does_not_require_cell_identity_args() -> None:
+    class Args:
+        recompute_relative_only = True
+        building = None
+        start_date = None
+        mode = None
+
+    validate_args(Args())
+
+
+def test_add_relative_metrics_compares_rows_to_matching_baseline() -> None:
+    base = {
+        "building": "large_hot_ac",
+        "start_date": "2017-07-29",
+        "run_period_days": 1,
+        "timestep_minutes": 15,
+        "mode": "cooling",
+        "peak_start": "17:00",
+        "peak_end": "20:00",
+        "comfort_lower_f": 72.0,
+        "comfort_upper_f": 76.0,
+        "normal_heat_setpoint_f": 68.0,
+        "normal_cool_setpoint_f": 75.0,
+        "forecast_kind": "epw",
+        "comfort_violation_min": 510.0,
+        "comfort_violation_degree_min": 280.0,
+    }
+    metrics = pd.DataFrame(
+        [
+            {
+                **base,
+                "controller": "baseline",
+                "peak_runtime_min": 180.0,
+                "peak_energy_kwh": 2.0,
+                "total_energy_kwh": 4.0,
+                "cost_usd": 1.50,
+                "peak_cost_usd": 0.90,
+            },
+            {
+                **base,
+                "controller": "mpc",
+                "peak_runtime_min": 15.0,
+                "peak_energy_kwh": 0.5,
+                "total_energy_kwh": 4.4,
+                "cost_usd": 1.20,
+                "peak_cost_usd": 0.20,
+                "comfort_violation_min": 525.0,
+                "comfort_violation_degree_min": 300.0,
+            },
+        ]
+    )
+
+    out = add_relative_metrics(metrics)
+    baseline = out[out["controller"] == "baseline"].iloc[0]
+    mpc = out[out["controller"] == "mpc"].iloc[0]
+
+    assert baseline["peak_runtime_reduction_pct"] == 0.0
+    assert baseline["energy_overhead_pct"] == 0.0
+    assert mpc["peak_runtime_reduction_pct"] == pytest.approx(91.6666667)
+    assert mpc["peak_energy_reduction_pct"] == 75.0
+    assert mpc["energy_overhead_pct"] == pytest.approx(10.0)
+    assert mpc["cost_savings_pct"] == pytest.approx(20.0)
+    assert mpc["peak_cost_savings_pct"] == pytest.approx(77.7777778)
+    assert mpc["comfort_violation_delta_min"] == 15.0
+    assert mpc["comfort_degree_min_delta"] == 20.0
+
+
+def test_add_relative_metrics_leaves_undefined_pct_when_baseline_is_zero() -> None:
+    base = {
+        "building": "small_hot_heatpump",
+        "start_date": "2017-07-15",
+        "run_period_days": 1,
+        "timestep_minutes": 15,
+        "mode": "cooling",
+        "peak_start": "17:00",
+        "peak_end": "20:00",
+        "comfort_lower_f": 72.0,
+        "comfort_upper_f": 76.0,
+        "normal_heat_setpoint_f": 68.0,
+        "normal_cool_setpoint_f": 75.0,
+        "forecast_kind": "epw",
+        "comfort_violation_min": 0.0,
+        "comfort_violation_degree_min": 0.0,
+        "cost_usd": 0.0,
+        "peak_cost_usd": 0.0,
+    }
+    metrics = pd.DataFrame(
+        [
+            {
+                **base,
+                "controller": "baseline",
+                "peak_runtime_min": 0.0,
+                "peak_energy_kwh": 0.0,
+                "total_energy_kwh": 0.0,
+            },
+            {
+                **base,
+                "controller": "mpc",
+                "peak_runtime_min": 15.0,
+                "peak_energy_kwh": 0.5,
+                "total_energy_kwh": 2.0,
+            },
+        ]
+    )
+
+    out = add_relative_metrics(metrics)
+    mpc = out[out["controller"] == "mpc"].iloc[0]
+
+    assert pd.isna(mpc["peak_runtime_reduction_pct"])
+    assert pd.isna(mpc["peak_energy_reduction_pct"])
+    assert pd.isna(mpc["energy_overhead_pct"])
