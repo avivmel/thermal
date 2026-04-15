@@ -21,7 +21,7 @@ from mpc.forecast import EPWForecast, PersistenceForecast
 from mpc.model_interfaces import XGBFirstPassagePredictor
 from mpc.peak_mpc import MPCConfig, PeakAwareMPCController, PeakWindow
 from mpc.thermalgym_adapter import ThermalGymMPCAdapter
-from thermalgym import ThermalEnv, get_building
+from thermalgym import Baseline, PreCool, PreHeat, Setback, ThermalEnv, get_building
 
 
 def main() -> None:
@@ -44,15 +44,7 @@ def main() -> None:
 
     started = time.time()
     building = get_building(args.building)
-    predictor = XGBFirstPassagePredictor.from_model_files(
-        active_model_path=args.active_model,
-        drift_model_path=args.drift_model,
-    )
-
-    forecast = build_forecast(args.forecast_kind, building.epw_path, pd.Timestamp(args.start_date))
-    config = build_mpc_config(args)
-    controller = PeakAwareMPCController(config, predictor, forecast=forecast)
-    adapter = ThermalGymMPCAdapter.for_building(building, mode=args.mode)
+    runner = build_controller_runner(args, building)
 
     env = ThermalEnv(
         building=building,
@@ -63,21 +55,8 @@ def main() -> None:
 
     command_rows: list[dict[str, Any]] = []
     while not env.done:
-        state = adapter.state_from_obs(obs)
-        step_forecast = PersistenceForecast.from_state(state) if args.forecast_kind == "persistence" else None
-        command = controller.decide(state, forecast=step_forecast)
-        action = adapter.action_from_command(command)
-        command_rows.append(
-            {
-                "timestamp": state.timestamp,
-                "phase": command.phase,
-                "reason": command.reason,
-                "heat_setpoint": command.heat_setpoint_f,
-                "cool_setpoint": command.cool_setpoint_f,
-                "action_heat_setpoint": action["heat_setpoint"],
-                "action_cool_setpoint": action["cool_setpoint"],
-            }
-        )
+        action, command_row = runner.action_for_obs(obs)
+        command_rows.append(command_row)
         obs = env.step(action)
 
     history = env.history
@@ -100,9 +79,11 @@ def main() -> None:
     manifest = {
         "git_sha": git_sha(),
         "cell": cell,
-        "predictor_metadata": metadata_to_dict(predictor.metadata),
-        "active_model": str(args.active_model),
-        "drift_model": str(args.drift_model),
+        "predictor_metadata": metadata_to_dict(runner.predictor.metadata)
+        if runner.predictor is not None
+        else None,
+        "active_model": str(args.active_model) if runner.predictor is not None else None,
+        "drift_model": str(args.drift_model) if runner.predictor is not None else None,
         "forecast_kind": args.forecast_kind,
         "raw_path": str(raw_path),
         "commands_path": str(commands_path),
@@ -119,10 +100,15 @@ def main() -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run one MPC evaluation cell in ThermalGym.")
+    parser = argparse.ArgumentParser(description="Run one controller evaluation cell in ThermalGym.")
     parser.add_argument("--building", required=True)
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--mode", required=True, choices=["heating", "cooling"])
+    parser.add_argument(
+        "--controller",
+        choices=["mpc", "baseline", "setback", "precool", "preheat"],
+        default="mpc",
+    )
     parser.add_argument("--peak-start", required=True, help="Peak start clock time, e.g. 17:00")
     parser.add_argument("--peak-end", required=True, help="Peak end clock time, e.g. 20:00")
     parser.add_argument("--run-period-days", type=int, default=1)
@@ -138,6 +124,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizon-minutes", type=int, default=360)
     parser.add_argument("--precondition-margin-minutes", type=float, default=10.0)
     parser.add_argument("--drift-safety-margin-minutes", type=float, default=10.0)
+    parser.add_argument("--rule-offset", type=float, default=2.0)
+    parser.add_argument("--rule-setback", type=float, default=2.0)
+    parser.add_argument("--rule-setback-magnitude", type=float, default=4.0)
+    parser.add_argument("--rule-precondition-hours", type=float, default=2.0)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -172,8 +162,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--run-period-days must be positive")
     if args.comfort_lower >= args.comfort_upper:
         raise SystemExit("--comfort-lower must be less than --comfort-upper")
-    parse_clock_time(args.peak_start)
-    parse_clock_time(args.peak_end)
+    _, peak_start_minute = parse_clock_time(args.peak_start)
+    _, peak_end_minute = parse_clock_time(args.peak_end)
+    if args.controller != "mpc" and (peak_start_minute != 0 or peak_end_minute != 0):
+        raise SystemExit("rule-based controllers require whole-hour --peak-start and --peak-end")
 
 
 def build_mpc_config(args: argparse.Namespace) -> MPCConfig:
@@ -206,6 +198,134 @@ def build_forecast(kind: str, epw_path: Path, start_date: pd.Timestamp):
     if kind in ("none", "persistence"):
         return None
     raise ValueError(f"unsupported forecast kind: {kind}")
+
+
+class ControllerRunner:
+    def __init__(
+        self,
+        controller_name: str,
+        policy,
+        adapter: ThermalGymMPCAdapter | None = None,
+        forecast_kind: str = "none",
+        predictor: XGBFirstPassagePredictor | None = None,
+    ) -> None:
+        self.controller_name = controller_name
+        self.policy = policy
+        self.adapter = adapter
+        self.forecast_kind = forecast_kind
+        self.predictor = predictor
+
+    def action_for_obs(self, obs: dict[str, Any]) -> tuple[dict[str, float], dict[str, Any]]:
+        if self.controller_name == "mpc":
+            if self.adapter is None:
+                raise RuntimeError("MPC runner requires an adapter")
+            state = self.adapter.state_from_obs(obs)
+            step_forecast = (
+                PersistenceForecast.from_state(state) if self.forecast_kind == "persistence" else None
+            )
+            command = self.policy.decide(state, forecast=step_forecast)
+            action = self.adapter.action_from_command(command)
+            return action, {
+                "timestamp": state.timestamp,
+                "phase": command.phase,
+                "reason": command.reason,
+                "heat_setpoint": command.heat_setpoint_f,
+                "cool_setpoint": command.cool_setpoint_f,
+                "action_heat_setpoint": action["heat_setpoint"],
+                "action_cool_setpoint": action["cool_setpoint"],
+            }
+
+        action = self.policy(obs)
+        return action, {
+            "timestamp": pd.Timestamp(obs["timestamp"]),
+            "phase": "non_mpc",
+            "reason": self.controller_name,
+            "heat_setpoint": None,
+            "cool_setpoint": None,
+            "action_heat_setpoint": action["heat_setpoint"],
+            "action_cool_setpoint": action["cool_setpoint"],
+        }
+
+
+def build_controller_runner(args: argparse.Namespace, building) -> ControllerRunner:
+    if args.controller == "mpc":
+        predictor = XGBFirstPassagePredictor.from_model_files(
+            active_model_path=args.active_model,
+            drift_model_path=args.drift_model,
+        )
+        forecast = build_forecast(args.forecast_kind, building.epw_path, pd.Timestamp(args.start_date))
+        config = build_mpc_config(args)
+        controller = PeakAwareMPCController(config, predictor, forecast=forecast)
+        adapter = ThermalGymMPCAdapter.for_building(building, mode=args.mode)
+        return ControllerRunner(
+            controller_name="mpc",
+            policy=controller,
+            adapter=adapter,
+            forecast_kind=args.forecast_kind,
+            predictor=predictor,
+        )
+
+    peak_start_hour, _ = parse_clock_time(args.peak_start)
+    peak_end_hour, _ = parse_clock_time(args.peak_end)
+    policy = build_rule_policy(
+        controller=args.controller,
+        mode=args.mode,
+        peak_start_hour=peak_start_hour,
+        peak_end_hour=peak_end_hour,
+        base_heat=args.normal_heat_setpoint,
+        base_cool=args.normal_cool_setpoint,
+        rule_offset=args.rule_offset,
+        rule_setback=args.rule_setback,
+        rule_setback_magnitude=args.rule_setback_magnitude,
+        rule_precondition_hours=args.rule_precondition_hours,
+    )
+    return ControllerRunner(controller_name=args.controller, policy=policy)
+
+
+def build_rule_policy(
+    controller: str,
+    mode: str,
+    peak_start_hour: int,
+    peak_end_hour: int,
+    base_heat: float,
+    base_cool: float,
+    rule_offset: float,
+    rule_setback: float,
+    rule_setback_magnitude: float,
+    rule_precondition_hours: float,
+):
+    if controller == "baseline":
+        return Baseline(heat_setpoint=base_heat, cool_setpoint=base_cool)
+    if controller == "setback":
+        return Setback(
+            magnitude=rule_setback_magnitude,
+            peak_start=peak_start_hour,
+            peak_end=peak_end_hour,
+            mode=mode,
+            base_heat=base_heat,
+            base_cool=base_cool,
+        )
+    if controller == "precool":
+        return PreCool(
+            precool_offset=rule_offset,
+            precool_hours=rule_precondition_hours,
+            peak_start=peak_start_hour,
+            peak_end=peak_end_hour,
+            setback=rule_setback,
+            base_heat=base_heat,
+            base_cool=base_cool,
+        )
+    if controller == "preheat":
+        return PreHeat(
+            preheat_offset=rule_offset,
+            preheat_hours=rule_precondition_hours,
+            peak_start=peak_start_hour,
+            peak_end=peak_end_hour,
+            setback=rule_setback,
+            base_heat=base_heat,
+            base_cool=base_cool,
+        )
+    raise ValueError(f"unsupported controller: {controller}")
 
 
 def compute_metrics(
@@ -260,6 +380,7 @@ def compute_metrics(
     phase_counts = commands["phase"].value_counts().to_dict() if not commands.empty else {}
     for phase in ("normal", "precondition", "peak_coast", "peak_maintain"):
         metrics[f"decisions_phase_{phase}_count"] = int(phase_counts.get(phase, 0))
+    metrics["decisions_phase_non_mpc_count"] = int(phase_counts.get("non_mpc", 0))
 
     metrics.update(cell)
     return metrics
@@ -321,7 +442,7 @@ def timestamp_for_time(date: pd.Timestamp, clock_time: str) -> pd.Timestamp:
 def build_cell(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "cell_id": cell_id_from_args(args),
-        "controller": "mpc",
+        "controller": args.controller,
         "building": args.building,
         "start_date": args.start_date,
         "run_period_days": args.run_period_days,
@@ -334,6 +455,10 @@ def build_cell(args: argparse.Namespace) -> dict[str, Any]:
         "normal_heat_setpoint_f": args.normal_heat_setpoint,
         "normal_cool_setpoint_f": args.normal_cool_setpoint,
         "forecast_kind": args.forecast_kind,
+        "rule_offset": args.rule_offset,
+        "rule_setback": args.rule_setback,
+        "rule_setback_magnitude": args.rule_setback_magnitude,
+        "rule_precondition_hours": args.rule_precondition_hours,
     }
 
 
@@ -343,6 +468,7 @@ def cell_id_from_args(args: argparse.Namespace) -> str:
             args.building,
             args.start_date,
             args.mode,
+            args.controller,
             f"peak{args.peak_start.replace(':', '')}-{args.peak_end.replace(':', '')}",
             args.forecast_kind,
         ]
