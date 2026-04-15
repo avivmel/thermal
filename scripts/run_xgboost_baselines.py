@@ -12,12 +12,15 @@ Uses LightGBM if available, falls back to sklearn HistGradientBoosting.
 Usage: python scripts/run_xgboost_baselines.py
 """
 
+import argparse
+import pickle
+from pathlib import Path
 import polars as pl
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, Union
 from tqdm import tqdm
 import time
 import warnings
@@ -45,8 +48,13 @@ print(f"Using GBM backend: {GBM_BACKEND}")
 
 # Config
 DATA_PATH = "data/setpoint_responses.parquet"
+DRIFT_DATA_PATH = "data/drift_episodes.parquet"
+DEFAULT_MODEL_OUTPUT = Path("models/active_time_xgb.pkl")
+DEFAULT_DRIFT_MODEL_OUTPUT = Path("models/drift_time_xgb.pkl")
 MIN_DURATION = 5    # Minimum duration in minutes (1 timestep)
 MAX_DURATION = 240  # Maximum duration in minutes (4 hours) - filter anomalies
+MIN_DRIFT_DURATION = 5
+MAX_DRIFT_DURATION = 480
 MIN_EPISODES_PER_HOME = 10  # Minimum episodes to train per-home model
 
 
@@ -308,6 +316,23 @@ HUMIDITY_FEATURES = [
 ]
 
 ALL_FEATURES = CORE_FEATURES + TIME_FEATURES + HUMIDITY_FEATURES
+
+DRIFT_FEATURES = [
+    "margin",
+    "log_margin",
+    "is_heating",
+    "signed_thermal_drive",
+    "outdoor_temp",
+    "start_temp",
+    "boundary_temp",
+    "hour_sin",
+    "hour_cos",
+    "month_sin",
+    "month_cos",
+    "hour",
+    "month",
+    "day_of_week",
+]
 
 
 # =============================================================================
@@ -574,21 +599,18 @@ def model_per_home_xgb(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[n
 # Model 4: Hybrid - Global with per-home residual correction
 # =============================================================================
 
-def model_hybrid_xgb(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[np.ndarray, dict]:
+def fit_hybrid_xgb_artifact(train_df: pd.DataFrame) -> dict:
     """
-    Two-stage model:
+    Fit the reusable two-stage active time-to-target model:
     1. Global XGBoost for base prediction
     2. Per-home mean residual correction (shrunk toward 0)
 
     This is like a boosted version of the hierarchical model.
     """
-    print("  Fitting hybrid XGBoost (global + per-home residual)...")
-
     feature_cols = ALL_FEATURES
 
     # Stage 1: Global model
     X_train = train_df[feature_cols].fillna(0).values
-    X_test = test_df[feature_cols].fillna(0).values
     y_train = train_df["log_duration"].values
 
     global_model = create_gbm_model(max_depth=6, n_estimators=200, learning_rate=0.1, min_samples=10)
@@ -625,8 +647,35 @@ def model_hybrid_xgb(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[np.
                 weight = n / (n + shrinkage_n)
                 home_mode_residuals[(home, mode)] = hm_resid * weight
 
-    # Predict
+    return {
+        "version": 1,
+        "model_type": "hybrid_gbm_active_time_to_target",
+        "backend": GBM_BACKEND,
+        "model": global_model,
+        "feature_cols": feature_cols,
+        "predict_log": True,
+        "home_residuals": home_residuals,
+        "home_mode_residuals": home_mode_residuals,
+        "residual_shrinkage_n": shrinkage_n,
+        "min_duration": MIN_DURATION,
+        "max_duration": MAX_DURATION,
+        "n_train_rows": int(len(train_df)),
+        "n_homes_with_correction": int(len(home_residuals)),
+        "n_home_modes_with_correction": int(len(home_mode_residuals)),
+    }
+
+
+def predict_hybrid_xgb_artifact(artifact: dict, test_df: pd.DataFrame) -> np.ndarray:
+    """Predict minutes from a fitted hybrid GBM artifact."""
+    feature_cols = artifact["feature_cols"]
+    global_model = artifact["model"]
+    home_residuals = artifact["home_residuals"]
+    home_mode_residuals = artifact["home_mode_residuals"]
+
+    X_test = test_df[feature_cols].fillna(0).values
     global_pred = global_model.predict(X_test)
+
+    # Predict
     predictions = np.zeros(len(test_df))
 
     for i, (idx, row) in enumerate(test_df.iterrows()):
@@ -643,20 +692,138 @@ def model_hybrid_xgb(train_df: pd.DataFrame, test_df: pd.DataFrame) -> tuple[np.
 
         predictions[i] = np.exp(log_pred)
 
+    return predictions
+
+
+def save_hybrid_xgb_artifact(artifact: dict, output_path: Union[str, Path]) -> None:
+    """Write a reusable model artifact for MPC active-time prediction."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as f:
+        pickle.dump(artifact, f)
+    print(f"\nSaved active time-to-target model: {output_path}")
+
+
+def create_drift_samples(
+    drift_path: Union[str, Path] = DRIFT_DATA_PATH,
+    max_rows_per_direction: int = 80_000,
+    random_seed: int = 42,
+) -> pd.DataFrame:
+    """Create reusable passive-drift first-passage samples."""
+    print("Creating drift first-passage samples...")
+    t0 = time.time()
+    samples = []
+
+    for direction, drift_direction in [("heating", "warming_drift"), ("cooling", "cooling_drift")]:
+        df = (
+            pl.scan_parquet(drift_path)
+            .filter(
+                (pl.col("timestep_idx") == 0)
+                & (pl.col("drift_direction") == drift_direction)
+                & (pl.col("crossed_boundary") == True)
+                & pl.col("time_to_boundary_min").is_between(MIN_DRIFT_DURATION, MAX_DRIFT_DURATION)
+            )
+            .select(
+                "home_id",
+                "timestamp",
+                "start_temp",
+                "boundary_temp",
+                "Outdoor_Temperature",
+                "time_to_boundary_min",
+            )
+            .collect()
+            .to_pandas()
+        )
+        if len(df) > max_rows_per_direction:
+            df = df.sample(n=max_rows_per_direction, random_state=random_seed)
+
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["is_heating"] = 1 if direction == "heating" else 0
+        if direction == "heating":
+            df["margin"] = df["start_temp"] - df["boundary_temp"]
+            df["signed_thermal_drive"] = df["start_temp"] - df["Outdoor_Temperature"]
+        else:
+            df["margin"] = df["boundary_temp"] - df["start_temp"]
+            df["signed_thermal_drive"] = df["Outdoor_Temperature"] - df["start_temp"]
+
+        df = df[df["margin"] > 1e-6].copy()
+        df["log_margin"] = np.log(df["margin"] + 0.1)
+        df["outdoor_temp"] = df["Outdoor_Temperature"]
+        df["hour"] = df["timestamp"].dt.hour
+        df["month"] = df["timestamp"].dt.month
+        df["day_of_week"] = df["timestamp"].dt.dayofweek
+        df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
+        df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
+        df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
+        df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+        df["duration_min"] = df["time_to_boundary_min"].astype(float)
+        df["log_duration"] = np.log(df["duration_min"])
+        samples.append(df)
+
+    result = pd.concat(samples, ignore_index=True)
+    print(f"  Drift samples: {len(result):,} rows in {time.time()-t0:.1f}s")
+    return result
+
+
+def fit_drift_xgb_artifact(drift_df: pd.DataFrame) -> dict:
+    """Fit a reusable GBM passive-drift time-to-boundary model."""
+    x_train = drift_df[DRIFT_FEATURES].fillna(0).values
+    y_train = drift_df["log_duration"].values
+
+    model = create_gbm_model(max_depth=6, n_estimators=200, learning_rate=0.1, min_samples=10)
+    model.fit(x_train, y_train)
+
+    return {
+        "version": 1,
+        "model_type": "gbm_drift_time_to_boundary",
+        "backend": GBM_BACKEND,
+        "model": model,
+        "feature_cols": DRIFT_FEATURES,
+        "predict_log": True,
+        "min_duration": MIN_DRIFT_DURATION,
+        "max_duration": MAX_DRIFT_DURATION,
+        "n_train_rows": int(len(drift_df)),
+    }
+
+
+def save_drift_xgb_artifact(artifact: dict, output_path: Union[str, Path]) -> None:
+    """Write a reusable model artifact for MPC drift-time prediction."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as f:
+        pickle.dump(artifact, f)
+    print(f"Saved drift time-to-boundary model: {output_path}")
+
+
+def model_hybrid_xgb(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    return_artifact: bool = False,
+) -> Union[Tuple[np.ndarray, dict], Tuple[np.ndarray, dict, dict]]:
+    """Fit and evaluate the reusable hybrid active time-to-target model."""
+    print("  Fitting hybrid XGBoost (global + per-home residual)...")
+
+    artifact = fit_hybrid_xgb_artifact(train_df)
+    predictions = predict_hybrid_xgb_artifact(artifact, test_df)
+
     # Feature importance from global model
-    importance = get_feature_importance(global_model, feature_cols)
+    importance = get_feature_importance(artifact["model"], artifact["feature_cols"])
     top_features = sorted(importance.items(), key=lambda x: -x[1])[:5] if importance else []
 
     info = {
-        "n_homes_with_correction": len(home_residuals),
-        "n_home_modes_with_correction": len(home_mode_residuals),
-        "residual_std": np.std(list(home_residuals.values())),
+        "n_homes_with_correction": artifact["n_homes_with_correction"],
+        "n_home_modes_with_correction": artifact["n_home_modes_with_correction"],
+        "residual_std": np.std(list(artifact["home_residuals"].values())),
         "top_features": top_features,
+        "artifact_backend": artifact["backend"],
+        "artifact_rows": artifact["n_train_rows"],
     }
 
     print(f"    Homes with correction: {info['n_homes_with_correction']}")
     print(f"    Residual std: {info['residual_std']:.3f}")
 
+    if return_artifact:
+        return predictions, info, artifact
     return predictions, info
 
 
@@ -693,7 +860,10 @@ def print_results(name: str, metrics: Metrics, info: dict = None):
                 print(f"      {state}: MAE={m.mae:.1f}, Bias={m.bias:+.1f} (n={m.n_samples:,})")
 
 
-def main():
+def main(
+    model_output: Optional[Union[str, Path]] = DEFAULT_MODEL_OUTPUT,
+    drift_model_output: Optional[Union[str, Path]] = DEFAULT_DRIFT_MODEL_OUTPUT,
+):
     print("=" * 70)
     print("XGBoost Baselines for Time-to-Target Prediction")
     print("=" * 70)
@@ -755,7 +925,7 @@ def main():
 
     # Model 5: Hybrid (Global + per-home residual)
     print("\n[5/5] Hybrid XGBoost (Global + Per-Home Residual)")
-    pred, info = model_hybrid_xgb(train_df, test_df)
+    pred, info, artifact = model_hybrid_xgb(train_df, test_df, return_artifact=True)
     metrics = compute_metrics(
         pred, test_df["duration_min"].values,
         test_df["change_type"].values, test_df["initial_gap"].values,
@@ -763,6 +933,14 @@ def main():
     )
     results.append(("Hybrid XGB", metrics, info))
     print_results("Hybrid XGB", metrics, info)
+
+    if model_output:
+        save_hybrid_xgb_artifact(artifact, model_output)
+
+    if drift_model_output:
+        drift_df = create_drift_samples(DRIFT_DATA_PATH)
+        drift_artifact = fit_drift_xgb_artifact(drift_df)
+        save_drift_xgb_artifact(drift_artifact, drift_model_output)
 
     # Summary table
     print()
@@ -788,4 +966,19 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-output",
+        default=str(DEFAULT_MODEL_OUTPUT),
+        help="Path for the reusable active time-to-target model artifact. Use '' to skip saving.",
+    )
+    parser.add_argument(
+        "--drift-model-output",
+        default=str(DEFAULT_DRIFT_MODEL_OUTPUT),
+        help="Path for the reusable drift time-to-boundary model artifact. Use '' to skip saving.",
+    )
+    args = parser.parse_args()
+    main(
+        model_output=args.model_output or None,
+        drift_model_output=args.drift_model_output or None,
+    )
