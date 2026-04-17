@@ -6,10 +6,13 @@ import pytest
 from scripts.run_mpc_evaluation import (
     add_relative_metrics,
     build_rule_policy,
+    comfort_deviation_for_mode,
     cell_id_from_args,
     compute_metrics,
     mask_time_window,
     parse_clock_time,
+    recompute_metrics_from_raw,
+    recompute_runtime_from_raw,
     validate_args,
 )
 
@@ -67,7 +70,7 @@ def test_compute_metrics_matches_mpc_plan_names() -> None:
         }
     )
     commands = pd.DataFrame({"phase": ["normal", "precondition", "peak_coast", "peak_coast"]})
-    cell = {"cell_id": "cell-a", "building": "small_cold_heatpump"}
+    cell = {"cell_id": "cell-a", "building": "small_cold_heatpump", "mode": "heating"}
 
     metrics = compute_metrics(
         history=history,
@@ -84,8 +87,12 @@ def test_compute_metrics_matches_mpc_plan_names() -> None:
     assert metrics["pre_peak_runtime_min"] == 15.0
     assert metrics["peak_energy_kwh"] == 1.0
     assert metrics["total_energy_kwh"] == 1.5
-    assert metrics["comfort_violation_min"] == 30.0
-    assert metrics["comfort_violation_degree_min"] == 30.0
+    assert metrics["comfort_violation_min"] == 15.0
+    assert metrics["comfort_violation_degree_min"] == 15.0
+    assert metrics["comfort_band_violation_min"] == 30.0
+    assert metrics["comfort_band_violation_degree_min"] == 30.0
+    assert metrics["comfort_too_cold_min"] == 15.0
+    assert metrics["comfort_too_hot_min"] == 15.0
     assert metrics["max_violation_f"] == 1.0
     assert metrics["cost_usd"] == pytest.approx(0.525)
     assert metrics["peak_cost_usd"] == pytest.approx(0.45)
@@ -111,7 +118,7 @@ def test_compute_metrics_counts_non_mpc_decisions() -> None:
     metrics = compute_metrics(
         history=history,
         commands=commands,
-        cell={"cell_id": "baseline-cell"},
+        cell={"cell_id": "baseline-cell", "mode": "heating"},
         comfort_lower_f=68.0,
         comfort_upper_f=72.0,
         peak_start="17:00",
@@ -120,6 +127,72 @@ def test_compute_metrics_counts_non_mpc_decisions() -> None:
 
     assert metrics["decisions_phase_normal_count"] == 0
     assert metrics["decisions_phase_non_mpc_count"] == 2
+
+
+def test_compute_metrics_counts_power_as_runtime_when_hvac_mode_is_off() -> None:
+    history = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2017-01-01 17:00", "2017-01-01 17:15"]),
+            "hvac_mode": ["off", "off"],
+            "hvac_power_kw": [0.10, 0.01],
+            "indoor_temp": [70.0, 70.0],
+            "electricity_price": [0.45, 0.45],
+        }
+    )
+    commands = pd.DataFrame({"phase": ["non_mpc", "non_mpc"]})
+
+    metrics = compute_metrics(
+        history=history,
+        commands=commands,
+        cell={"cell_id": "power-runtime-cell", "mode": "heating"},
+        comfort_lower_f=68.0,
+        comfort_upper_f=72.0,
+        peak_start="17:00",
+        peak_end="20:00",
+        runtime_power_threshold_kw=0.05,
+    )
+
+    assert metrics["peak_runtime_min"] == 15.0
+
+
+def test_compute_metrics_uses_too_hot_as_primary_cooling_comfort_violation() -> None:
+    history = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2017-07-29 12:00", "2017-07-29 12:15", "2017-07-29 12:30"]
+            ),
+            "hvac_mode": ["off", "off", "off"],
+            "hvac_power_kw": [0.0, 0.0, 0.0],
+            "indoor_temp": [71.0, 75.0, 77.0],
+            "electricity_price": [0.15, 0.15, 0.15],
+        }
+    )
+    commands = pd.DataFrame({"phase": ["non_mpc", "non_mpc", "non_mpc"]})
+
+    metrics = compute_metrics(
+        history=history,
+        commands=commands,
+        cell={"cell_id": "cooling-comfort-cell", "mode": "cooling"},
+        comfort_lower_f=72.0,
+        comfort_upper_f=76.0,
+        peak_start="17:00",
+        peak_end="20:00",
+    )
+
+    assert metrics["comfort_violation_min"] == 15.0
+    assert metrics["comfort_violation_degree_min"] == 15.0
+    assert metrics["comfort_band_violation_min"] == 30.0
+    assert metrics["comfort_too_cold_min"] == 15.0
+    assert metrics["comfort_too_hot_min"] == 15.0
+
+
+def test_comfort_deviation_for_mode_selects_directional_violation() -> None:
+    low = pd.Series([1.0, 0.0])
+    high = pd.Series([0.0, 2.0])
+
+    assert comfort_deviation_for_mode("heating", low, high).tolist() == [1.0, 0.0]
+    assert comfort_deviation_for_mode("cooling", low, high).tolist() == [0.0, 2.0]
+    assert comfort_deviation_for_mode("both", low, high).tolist() == [1.0, 2.0]
 
 
 def test_build_rule_policy_uses_controller_specific_setpoints() -> None:
@@ -338,3 +411,75 @@ def test_add_relative_metrics_leaves_undefined_pct_when_baseline_is_zero() -> No
     assert pd.isna(mpc["peak_runtime_reduction_pct"])
     assert pd.isna(mpc["peak_energy_reduction_pct"])
     assert pd.isna(mpc["energy_overhead_pct"])
+
+
+def test_recompute_runtime_from_raw_updates_existing_metrics(tmp_path) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    cell_id = "cell-a"
+    pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2017-01-01 16:45", "2017-01-01 17:00", "2017-01-01 17:15"]
+            ),
+            "hvac_mode": ["off", "off", "off"],
+            "hvac_power_kw": [0.10, 0.10, 0.01],
+        }
+    ).to_parquet(raw_dir / f"{cell_id}.parquet", index=False)
+    metrics = pd.DataFrame(
+        [
+            {
+                "cell_id": cell_id,
+                "peak_start": "17:00",
+                "peak_end": "20:00",
+                "runtime_power_threshold_kw": 0.05,
+                "peak_runtime_min": 0.0,
+                "pre_peak_runtime_min": 0.0,
+            }
+        ]
+    )
+
+    out = recompute_runtime_from_raw(tmp_path, metrics)
+
+    assert out.loc[0, "peak_runtime_min"] == 15.0
+    assert out.loc[0, "pre_peak_runtime_min"] == 15.0
+
+
+def test_recompute_metrics_from_raw_updates_comfort_direction(tmp_path) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    cell_id = "cell-a"
+    pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(["2017-07-29 12:00", "2017-07-29 12:15"]),
+            "hvac_mode": ["off", "off"],
+            "hvac_power_kw": [0.0, 0.0],
+            "indoor_temp": [71.0, 77.0],
+            "electricity_price": [0.15, 0.15],
+        }
+    ).to_parquet(raw_dir / f"{cell_id}.parquet", index=False)
+    pd.DataFrame({"phase": ["non_mpc", "non_mpc"]}).to_parquet(
+        raw_dir / f"{cell_id}_commands.parquet",
+        index=False,
+    )
+    metrics = pd.DataFrame(
+        [
+            {
+                "cell_id": cell_id,
+                "mode": "cooling",
+                "peak_start": "17:00",
+                "peak_end": "20:00",
+                "comfort_lower_f": 72.0,
+                "comfort_upper_f": 76.0,
+                "runtime_power_threshold_kw": 0.05,
+                "comfort_violation_min": 30.0,
+            }
+        ]
+    )
+
+    out = recompute_metrics_from_raw(tmp_path, metrics)
+
+    assert out.loc[0, "comfort_violation_min"] == 15.0
+    assert out.loc[0, "comfort_band_violation_min"] == 30.0
+    assert out.loc[0, "comfort_too_cold_min"] == 15.0
+    assert out.loc[0, "comfort_too_hot_min"] == 15.0

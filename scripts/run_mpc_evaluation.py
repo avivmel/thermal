@@ -30,7 +30,11 @@ def main() -> None:
     metrics_path = out_dir / "metrics.parquet"
 
     if args.recompute_relative_only:
-        recompute_relative_metrics_file(metrics_path)
+        recompute_relative_metrics_file(
+            metrics_path,
+            recompute_runtime_from_raw_files=args.recompute_runtime_from_raw,
+            recompute_metrics_from_raw_files=args.recompute_metrics_from_raw,
+        )
         print(f"Updated relative metrics: {metrics_path}")
         return
 
@@ -78,6 +82,7 @@ def main() -> None:
         comfort_upper_f=args.comfort_upper,
         peak_start=args.peak_start,
         peak_end=args.peak_end,
+        runtime_power_threshold_kw=args.runtime_power_threshold_kw,
     )
     metrics["wall_time_s"] = time.time() - started
     write_metrics(metrics_path, metrics, overwrite_cell_id=cell_id)
@@ -134,10 +139,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rule-setback", type=float, default=2.0)
     parser.add_argument("--rule-setback-magnitude", type=float, default=4.0)
     parser.add_argument("--rule-precondition-hours", type=float, default=2.0)
+    parser.add_argument("--runtime-power-threshold-kw", type=float, default=0.05)
     parser.add_argument(
         "--recompute-relative-only",
         action="store_true",
         help="Update relative metrics in --out-dir/metrics.parquet without running EnergyPlus.",
+    )
+    parser.add_argument(
+        "--recompute-runtime-from-raw",
+        action="store_true",
+        help="When recomputing, refresh runtime columns from raw history parquet files.",
+    )
+    parser.add_argument(
+        "--recompute-metrics-from-raw",
+        action="store_true",
+        help="When recomputing, refresh all absolute metric columns from raw parquet files.",
     )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
@@ -353,6 +369,7 @@ def compute_metrics(
     comfort_upper_f: float,
     peak_start: str,
     peak_end: str,
+    runtime_power_threshold_kw: float = 0.05,
 ) -> dict[str, Any]:
     if history.empty:
         metrics = {
@@ -362,6 +379,14 @@ def compute_metrics(
             "pre_peak_runtime_min": 0.0,
             "comfort_violation_min": 0.0,
             "comfort_violation_degree_min": 0.0,
+            "comfort_band_violation_min": 0.0,
+            "comfort_band_violation_degree_min": 0.0,
+            "comfort_too_cold_min": 0.0,
+            "comfort_too_hot_min": 0.0,
+            "comfort_too_cold_degree_min": 0.0,
+            "comfort_too_hot_degree_min": 0.0,
+            "max_too_cold_f": 0.0,
+            "max_too_hot_f": 0.0,
             "max_violation_f": 0.0,
             "cost_usd": 0.0,
             "peak_cost_usd": 0.0,
@@ -374,12 +399,16 @@ def compute_metrics(
         energy_kwh = h["hvac_power_kw"].astype(float) * dt_h
         in_peak = mask_time_window(h["timestamp"], peak_start, peak_end)
         in_pre_peak = mask_pre_peak_window(h["timestamp"], peak_start, hours=2)
-        running = h["hvac_mode"] != "off"
+        running = (h["hvac_mode"] != "off") | (
+            h["hvac_power_kw"].astype(float) > runtime_power_threshold_kw
+        )
 
         low_deviation = (comfort_lower_f - h["indoor_temp"]).clip(lower=0.0)
         high_deviation = (h["indoor_temp"] - comfort_upper_f).clip(lower=0.0)
-        deviation = low_deviation + high_deviation
-        violating = deviation > 0.0
+        band_deviation = low_deviation + high_deviation
+        mode_deviation = comfort_deviation_for_mode(cell.get("mode"), low_deviation, high_deviation)
+        band_violating = band_deviation > 0.0
+        mode_violating = mode_deviation > 0.0
 
         prices = h["electricity_price"].astype(float)
         metrics = {
@@ -387,9 +416,17 @@ def compute_metrics(
             "peak_energy_kwh": float(energy_kwh[in_peak].sum()),
             "total_energy_kwh": float(energy_kwh.sum()),
             "pre_peak_runtime_min": float((running & in_pre_peak).sum() * dt_min),
-            "comfort_violation_min": float(violating.sum() * dt_min),
-            "comfort_violation_degree_min": float((deviation * dt_min).sum()),
-            "max_violation_f": float(deviation.max()),
+            "comfort_violation_min": float(mode_violating.sum() * dt_min),
+            "comfort_violation_degree_min": float((mode_deviation * dt_min).sum()),
+            "comfort_band_violation_min": float(band_violating.sum() * dt_min),
+            "comfort_band_violation_degree_min": float((band_deviation * dt_min).sum()),
+            "comfort_too_cold_min": float((low_deviation > 0.0).sum() * dt_min),
+            "comfort_too_hot_min": float((high_deviation > 0.0).sum() * dt_min),
+            "comfort_too_cold_degree_min": float((low_deviation * dt_min).sum()),
+            "comfort_too_hot_degree_min": float((high_deviation * dt_min).sum()),
+            "max_too_cold_f": float(low_deviation.max()),
+            "max_too_hot_f": float(high_deviation.max()),
+            "max_violation_f": float(mode_deviation.max()),
             "cost_usd": float((energy_kwh * prices).sum()),
             "peak_cost_usd": float((energy_kwh[in_peak] * prices[in_peak]).sum()),
         }
@@ -401,6 +438,18 @@ def compute_metrics(
 
     metrics.update(cell)
     return metrics
+
+
+def comfort_deviation_for_mode(
+    mode: Any,
+    low_deviation: pd.Series,
+    high_deviation: pd.Series,
+) -> pd.Series:
+    if mode == "heating":
+        return low_deviation
+    if mode == "cooling":
+        return high_deviation
+    return low_deviation + high_deviation
 
 
 def infer_timestep_minutes(history: pd.DataFrame) -> float:
@@ -476,6 +525,7 @@ def build_cell(args: argparse.Namespace) -> dict[str, Any]:
         "rule_setback": args.rule_setback,
         "rule_setback_magnitude": args.rule_setback_magnitude,
         "rule_precondition_hours": args.rule_precondition_hours,
+        "runtime_power_threshold_kw": args.runtime_power_threshold_kw,
     }
 
 
@@ -529,11 +579,98 @@ BASELINE_MATCH_COLUMNS = [
 ]
 
 
-def recompute_relative_metrics_file(path: Path) -> None:
+def recompute_relative_metrics_file(
+    path: Path,
+    recompute_runtime_from_raw_files: bool = False,
+    recompute_metrics_from_raw_files: bool = False,
+) -> None:
     if not path.exists():
         raise SystemExit(f"metrics file not found: {path}")
     metrics = pd.read_parquet(path)
+    if recompute_metrics_from_raw_files:
+        metrics = recompute_metrics_from_raw(path.parent, metrics)
+    elif recompute_runtime_from_raw_files:
+        metrics = recompute_runtime_from_raw(path.parent, metrics)
     add_relative_metrics(metrics).to_parquet(path, index=False)
+
+
+METRIC_COLUMNS = [
+    "peak_runtime_min",
+    "peak_energy_kwh",
+    "total_energy_kwh",
+    "pre_peak_runtime_min",
+    "comfort_violation_min",
+    "comfort_violation_degree_min",
+    "comfort_band_violation_min",
+    "comfort_band_violation_degree_min",
+    "comfort_too_cold_min",
+    "comfort_too_hot_min",
+    "comfort_too_cold_degree_min",
+    "comfort_too_hot_degree_min",
+    "max_too_cold_f",
+    "max_too_hot_f",
+    "max_violation_f",
+    "cost_usd",
+    "peak_cost_usd",
+    "decisions_phase_normal_count",
+    "decisions_phase_precondition_count",
+    "decisions_phase_peak_coast_count",
+    "decisions_phase_peak_maintain_count",
+    "decisions_phase_non_mpc_count",
+]
+
+
+def recompute_metrics_from_raw(out_dir: Path, metrics: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty or "cell_id" not in metrics.columns:
+        return metrics
+    result = metrics.copy()
+    for index, row in result.iterrows():
+        raw_path = out_dir / "raw" / f"{row['cell_id']}.parquet"
+        commands_path = out_dir / "raw" / f"{row['cell_id']}_commands.parquet"
+        if not raw_path.exists() or not commands_path.exists():
+            continue
+        recomputed = compute_metrics(
+            history=pd.read_parquet(raw_path),
+            commands=pd.read_parquet(commands_path),
+            cell=cell_metadata_from_metric_row(row),
+            comfort_lower_f=float(row["comfort_lower_f"]),
+            comfort_upper_f=float(row["comfort_upper_f"]),
+            peak_start=row["peak_start"],
+            peak_end=row["peak_end"],
+            runtime_power_threshold_kw=float(row.get("runtime_power_threshold_kw", 0.05)),
+        )
+        for column in METRIC_COLUMNS:
+            if column in recomputed:
+                result.loc[index, column] = recomputed[column]
+    return result
+
+
+def cell_metadata_from_metric_row(row: pd.Series) -> dict[str, Any]:
+    excluded = set(METRIC_COLUMNS) | set(RELATIVE_METRIC_COLUMNS)
+    return {key: value for key, value in row.to_dict().items() if key not in excluded}
+
+
+def recompute_runtime_from_raw(out_dir: Path, metrics: pd.DataFrame) -> pd.DataFrame:
+    if metrics.empty or "cell_id" not in metrics.columns:
+        return metrics
+    result = metrics.copy()
+    for index, row in result.iterrows():
+        raw_path = out_dir / "raw" / f"{row['cell_id']}.parquet"
+        if not raw_path.exists():
+            continue
+        history = pd.read_parquet(raw_path)
+        if history.empty:
+            continue
+        history["timestamp"] = pd.to_datetime(history["timestamp"])
+        dt_min = infer_timestep_minutes(history)
+        running = (history["hvac_mode"] != "off") | (
+            history["hvac_power_kw"].astype(float) > float(row.get("runtime_power_threshold_kw", 0.05))
+        )
+        in_peak = mask_time_window(history["timestamp"], row["peak_start"], row["peak_end"])
+        in_pre_peak = mask_pre_peak_window(history["timestamp"], row["peak_start"], hours=2)
+        result.loc[index, "peak_runtime_min"] = float((running & in_peak).sum() * dt_min)
+        result.loc[index, "pre_peak_runtime_min"] = float((running & in_pre_peak).sum() * dt_min)
+    return result
 
 
 def add_relative_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
