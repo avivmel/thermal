@@ -1,0 +1,13 @@
+building,start_date,run_period_days,timestep_minutes,mode,peak_start,peak_end,comfort_lower_f,comfort_upper_f,normal_heat_setpoint_f,normal_cool_setpoint_f,forecast_kind,controller
+large_hot_ac,2017-07-15,7,15,cooling,17:00,20:00,72.0,76.0,68.0,75.0,epw,baseline
+large_hot_ac,2017-07-15,7,15,cooling,17:00,20:00,72.0,76.0,68.0,75.0,epw,mpc
+large_hot_ac,2017-07-15,7,15,cooling,17:00,20:00,72.0,76.0,68.0,75.0,epw,precool
+large_hot_ac,2017-07-15,7,15,cooling,17:00,20:00,72.0,76.0,68.0,75.0,epw,setback
+small_cold_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,baseline
+small_cold_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,mpc
+small_cold_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,preheat
+small_cold_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,setback
+medium_mixed_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,baseline
+medium_mixed_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,mpc
+medium_mixed_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,preheat
+medium_mixed_heatpump,2017-01-15,7,15,heating,17:00,20:00,68.0,72.0,69.0,76.0,epw,setback
