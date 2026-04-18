@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,7 +35,11 @@ class BaselineCase:
 
 DEFAULT_CASES = [
     BaselineCase("2017-01-15", "heating"),
+    BaselineCase("2017-02-15", "heating"),
+    BaselineCase("2017-12-15", "heating"),
+    BaselineCase("2017-06-15", "cooling"),
     BaselineCase("2017-07-15", "cooling"),
+    BaselineCase("2017-08-15", "cooling"),
 ]
 
 
@@ -44,24 +50,25 @@ def main() -> None:
 
     if args.dry_run:
         for command in commands:
-            print(format_command(command))
+            print(format_command(command.argv))
         print(f"\nDry run: {len(commands)} baseline cells")
         return
 
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.workers == 1:
         for command in commands:
-            run_command(command)
+            run_command(command.argv)
     else:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = {executor.submit(run_command, command): command for command in commands}
+            futures = {executor.submit(run_command, command.argv): command for command in commands}
             for future in as_completed(futures):
                 command = futures[future]
                 try:
                     future.result()
                 except subprocess.CalledProcessError as exc:
-                    print(f"FAILED: {format_command(command)}", file=sys.stderr)
+                    print(f"FAILED: {format_command(command.argv)}", file=sys.stderr)
                     raise SystemExit(exc.returncode) from exc
+        merge_isolated_metrics(commands, out_dir)
 
     run_selector(args, out_dir)
 
@@ -98,10 +105,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_commands(args: argparse.Namespace, out_dir: Path) -> list[list[str]]:
-    commands: list[list[str]] = []
+@dataclass(frozen=True)
+class BaselineCommand:
+    argv: list[str]
+    metrics_path: Path
+
+
+def build_commands(args: argparse.Namespace, out_dir: Path) -> list[BaselineCommand]:
+    commands: list[BaselineCommand] = []
     for building in BUILDINGS:
         for case in DEFAULT_CASES:
+            command_out_dir = out_dir
+            if args.workers > 1:
+                command_out_dir = out_dir / "isolated" / cell_slug(
+                    building=building,
+                    start_date=case.start_date,
+                    mode=case.mode,
+                    peak_start=args.peak_start,
+                    peak_end=args.peak_end,
+                    forecast_kind=args.forecast_kind,
+                )
             command = [
                 sys.executable,
                 str(ROOT / "scripts" / "run_mpc_evaluation.py"),
@@ -122,19 +145,34 @@ def build_commands(args: argparse.Namespace, out_dir: Path) -> list[list[str]]:
                 "--timestep-minutes",
                 str(args.timestep_minutes),
                 "--out-dir",
-                str(out_dir),
+                str(command_out_dir),
                 "--forecast-kind",
                 args.forecast_kind,
             ]
             if args.overwrite:
                 command.append("--overwrite")
-            commands.append(command)
+            commands.append(BaselineCommand(command, command_out_dir / "metrics.parquet"))
     return commands
 
 
 def run_command(command: list[str]) -> None:
     print(f"RUN: {format_command(command)}", flush=True)
     subprocess.run(command, check=True)
+
+
+def merge_isolated_metrics(commands: list[BaselineCommand], out_dir: Path) -> None:
+    frames = []
+    missing = []
+    for command in commands:
+        if command.metrics_path.exists():
+            frames.append(pd.read_parquet(command.metrics_path))
+        else:
+            missing.append(str(command.metrics_path))
+    if missing:
+        raise SystemExit("missing isolated metrics files:\n" + "\n".join(missing))
+    metrics = pd.concat(frames, ignore_index=True)
+    metrics.to_parquet(out_dir / "metrics.parquet", index=False)
+    print(f"Merged isolated metrics: {len(metrics)} rows -> {out_dir / 'metrics.parquet'}")
 
 
 def run_selector(args: argparse.Namespace, out_dir: Path) -> None:
@@ -157,6 +195,19 @@ def run_selector(args: argparse.Namespace, out_dir: Path) -> None:
 
 def format_command(command: list[str]) -> str:
     return " ".join(shell_quote(part) for part in command)
+
+
+def cell_slug(
+    *,
+    building: str,
+    start_date: str,
+    mode: str,
+    peak_start: str,
+    peak_end: str,
+    forecast_kind: str,
+) -> str:
+    peak = f"{peak_start.replace(':', '')}-{peak_end.replace(':', '')}"
+    return f"{building}_{start_date}_{mode}_baseline_peak{peak}_{forecast_kind}"
 
 
 def shell_quote(value: str) -> str:
