@@ -1,6 +1,6 @@
 # MPC Evaluation Results
 
-Status: expanded pilot results are reproducible and directionally useful for paper tables, but the labeled cell count still overstates independent building diversity.
+Status: expanded pilot results are reproducible and directionally useful for paper tables. The analysis now includes deduplication diagnostics, and paper-facing claims should use the deduplicated metric-group counts rather than treating every labeled cell as independent.
 
 ## Evaluation Setup
 
@@ -27,8 +27,11 @@ Compact outputs:
 - `results/mpc_eval/baseline_grid_expanded_safe/selection/controller_grid.csv`
 - `results/mpc_eval/selected_grid_expanded_safe/analysis/report.md`
 - `results/mpc_eval/selected_grid_expanded_safe/analysis/tables/main_results.csv`
+- `results/mpc_eval/selected_grid_expanded_safe/analysis/tables/metric_groups.csv`
 
 Raw per-run outputs are intentionally not needed for the paper-facing summary.
+
+For a manuscript-oriented writeup, see `docs/MPC_PAPER_RESULTS_REPORT.md`.
 
 ## Screened Cells
 
@@ -51,14 +54,14 @@ Selected cells:
 
 The most useful current result is that MPC reduces peak energy and runtime with near-zero mode-aware comfort violations, while rule baselines shed more peak load by violating comfort for long periods.
 
-| Mode | Controller | Cells | Peak energy reduction, median | Peak runtime reduction, median | Total energy overhead, median | Mode-aware comfort violation, median |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Cooling | MPC | 9 | 49.8% | 41.7% | +0.27% | 0 min |
-| Cooling | Precool | 9 | 59.7% | 66.7% | +0.34% | 585 min |
-| Cooling | Setback | 9 | 79.6% | 83.3% | -5.67% | 945 min |
-| Heating | MPC | 18 | 45.5% | 42.6% | +0.58% | 0 min |
-| Heating | Preheat | 18 | 58.0% | 64.1% | +0.26% | 915 min |
-| Heating | Setback | 18 | 79.6% | 80.8% | -2.07% | 1268 min |
+| Mode | Controller | Labeled cells | Unique metric groups | Peak energy reduction, median | Peak runtime reduction, median | Total energy overhead, median | Mode-aware comfort violation, median |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Cooling | MPC | 9 | 3 | 49.8% | 41.7% | +0.27% | 0 min |
+| Cooling | Precool | 9 | 3 | 59.7% | 66.7% | +0.34% | 585 min |
+| Cooling | Setback | 9 | 3 | 79.6% | 83.3% | -5.67% | 945 min |
+| Heating | MPC | 18 | 6 | 45.5% | 42.6% | +0.58% | 0 min |
+| Heating | Preheat | 18 | 6 | 58.0% | 64.1% | +0.26% | 915 min |
+| Heating | Setback | 18 | 6 | 79.6% | 80.8% | -2.07% | 1268 min |
 
 Interpretation: rule baselines can shed more peak load, but they do so by violating comfort for long periods. MPC gives a smaller peak reduction while mostly preserving the mode-aware comfort objective. The heating MPC mean comfort violation is 12.5 minutes because the December cold-archetype cases show a small 75-minute violation on each repeated building label; the median remains 0 minutes.
 
@@ -73,20 +76,20 @@ Full comfort-band diagnostics are still reported because they expose simulator i
 
 ## Paper-Readiness Caveat
 
-These results should not yet be presented as a statistically independent `n=27` experiment. The added dates create real weather variation, but the selected ThermalGym archetypes still repeat identical metrics within building-label groups:
+These results should not be presented as a statistically independent `n=27` experiment. The added dates create real weather variation, but the selected ThermalGym archetypes still repeat identical metrics within building-label groups:
 
 - Cooling: 9 labeled cells collapse to 3 unique weather-pattern outcomes.
 - Cold heating: 9 labeled cells collapse to 3 unique weather-pattern outcomes.
 - Mixed heating: 9 labeled cells collapse to 3 unique weather-pattern outcomes.
 
-The defensible interpretation today is closer to 9 unique scenario patterns, not 27 independent building outcomes. This is a stronger pilot than the original single-date screen, but final paper claims should either count unique scenario patterns explicitly or fix the scenario construction so the small/medium/large archetype labels produce distinct thermal/HVAC behavior.
+The defensible interpretation today is 9 unique scenario patterns, not 27 independent building outcomes. This is a stronger pilot than the original single-date screen, but final paper claims should either count unique scenario patterns explicitly or fix the scenario construction so the small/medium/large archetype labels produce distinct thermal/HVAC behavior.
 
 ## Next Step
 
-Before freezing paper results, make the evaluation grid produce genuinely distinct building cells. The most direct options are:
+Before freezing final paper results, make the evaluation grid produce genuinely distinct building cells. The most direct options are:
 
-1. Add a deduplication diagnostic to the analysis output so repeated metric groups are counted explicitly.
-2. Validate whether ThermalGym building metadata is actually changing envelope/HVAC parameters across small/medium/large variants.
-3. If the archetype variants are not distinct, report unique archetype-weather combinations or fix the scenario construction.
+1. Validate whether ThermalGym building metadata is actually changing envelope/HVAC parameters across small/medium/large variants.
+2. If the archetype variants are not distinct, report unique archetype-weather combinations or fix the scenario construction.
+3. Regenerate `results/mpc_eval/selected_grid_expanded_safe/analysis/tables/main_results.csv` and `results/mpc_eval/selected_grid_expanded_safe/analysis/tables/metric_groups.csv` for the final paper tables.
 
-After that, rerun the selected controller grid and regenerate `results/mpc_eval/selected_grid_expanded_safe/analysis/tables/main_results.csv` for the paper tables.
+After that, rerun the selected controller grid and update `docs/MPC_PAPER_RESULTS_REPORT.md`.
